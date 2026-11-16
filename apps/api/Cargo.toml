@@ -1,0 +1,18 @@
+[package]
+name = "composer-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum.workspace = true
+composer-core.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+http-body-util = "0.1"
+serde_json.workspace = true
+tower = { version = "0.5", features = ["util"] }

@@ -1,0 +1,19 @@
+{
+  "name": "Task Platform",
+  "description": "A project management application assembled from reusable capabilities.",
+  "capabilities": [
+    {
+      "id": "authentication",
+      "description": "User sign-in, sessions, and authorization.",
+      "priority": "critical"
+    },
+    {
+      "id": "kanban-board",
+      "description": "Boards, columns, cards, and drag-and-drop task movement.",
+      "priority": "high"
+    }
+  ],
+  "constraints": {
+    "preferred_languages": ["rust", "typescript"]
+  }
+}
