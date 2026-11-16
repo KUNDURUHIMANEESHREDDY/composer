@@ -2,7 +2,7 @@
 
 ## Goal
 
-Prove the hardest product assumption: a reusable capability can be found, analyzed, extracted with its required dependencies, and integrated into a separate target project with evidence that it still works.
+Prove that a capability can be found in an existing repository, analyzed, extracted with its visible dependencies, and eventually integrated into a separate target project with evidence that it works.
 
 ## Milestone 0 — Foundation (complete)
 
@@ -27,55 +27,72 @@ Prove the hardest product assumption: a reusable capability can be found, analyz
 - [ ] Add repository-size checks and a stable snapshot artifact.
 - [ ] Add private repository support through an explicit credential broker.
 
-Acceptance evidence:
-- A public repository was cloned successfully: serde-rs/serde.
-- The command recorded commit e306b0c7c40ad21d5bdf52bcd20da513904682ae.
-- The command recorded Git tree 0d60d815badb637ff2c556a160cab3aed85e605d.
-- Seven Cargo manifests were discovered.
-- No repository build, package, or test scripts were invoked.
+## Milestone 2 — Repository inventory and syntax analysis (initial implementation complete)
 
-## Milestone 2 — Repository inventory and language analysis
+- [x] Bounded source file traversal.
+- [x] Detect Rust, Python, JavaScript, TypeScript, TSX, and Go source files.
+- [x] Add Tree-sitter grammar adapters for those languages.
+- [x] Extract selected declarations, imports, and call expressions.
+- [x] Report syntax errors and skipped files.
+- [ ] Expand grammar and framework-specific extraction coverage.
+- [ ] Add language-server/compiler adapters for deeper semantic resolution.
 
-- Detect languages and build systems from manifests and lockfiles.
-- Inventory source files while respecting ignore rules and size limits.
-- Detect license and notice files.
-- Produce a machine-readable repository inventory.
-- Add Tree-sitter parsing for TypeScript/JavaScript and Rust.
-- Identify files, modules, imports, exports, and tests.
+## Milestone 3 — Symbol and import graph (initial implementation complete)
 
-## Milestone 3 — Dependency graph
+- [x] Versioned graph model.
+- [x] Symbol IDs with source spans.
+- [x] Import relationships with local, unresolved, and ambiguous states.
+- [x] Call references with explicit name-match resolution states.
+- [x] Local import resolution for common Rust, Python, and JS/TS patterns.
+- [ ] Go module-aware package resolution.
+- [ ] Rust Cargo-aware module/crate resolution.
+- [ ] Python namespace package and relative-import completeness.
+- [ ] TypeScript tsconfig paths, package exports, and bundler resolution.
+- [ ] Scope-aware semantic symbol resolution.
 
-- Define stable nodes and typed relationships.
-- Record evidence and confidence for every inferred edge.
-- Add manifest dependencies, imports, symbols, configuration keys, test references, and runtime services.
-- Preserve unknown dependencies rather than claiming complete closure.
+## Milestone 4 — Feature boundaries and capsules (initial implementation complete)
 
-## Milestone 4 — Feature Capsule
+- [x] Keyword-based seed symbol recommendations.
+- [x] Conservative file-level dependency closure.
+- [x] Retain unresolved and ambiguous edges as warnings.
+- [x] Feature Capsule schema version 1.
+- [x] Copy included source files, nearest manifests, and root license evidence.
+- [x] SHA-256 digest for each capsule file.
+- [x] Source Git URL/commit/tree metadata when available.
+- [x] Refuse existing output directories and source/output overlap.
+- [ ] Parse dependency manifests into transitive package dependency closure.
+- [ ] Detect file-level license headers and parse SPDX expressions.
+- [ ] Add feature-specific tests and independent capsule verification.
+- [ ] Add capsule provenance attestation and registry.
 
-- Define a versioned capsule manifest.
-- Identify feature entry points and dependency closure.
-- Classify dependencies as required, optional, replaceable, external, or unresolved.
-- Copy only the minimum approved source set.
-- Preserve required licenses and notices.
-- Verify the capsule in isolation.
+Important: a Feature Capsule is currently a traceable extraction bundle, not a guaranteed standalone package or integration-ready module.
 
-## Milestone 5 — Integration and verification
+## Milestone 5 — Compatibility and integration
 
-- Inspect target project architecture.
-- Detect existing equivalent capabilities.
-- Generate an integration plan and adapter contracts.
-- Apply changes in a disposable target workspace.
-- Run unit, contract, integration, and regression tests.
-- Record transformations and results.
+- [ ] Inspect target project architecture.
+- [ ] Detect existing equivalent capabilities.
+- [ ] Generate an integration plan and adapter contracts.
+- [ ] Apply changes in a disposable target workspace.
+- [ ] Run unit, contract, integration, and regression tests.
+- [ ] Record transformations and results.
+
+## Milestone 6 — Autonomous engineering loop
+
+- [ ] Add durable workflow orchestration and typed agent contracts.
+- [ ] Discover candidates based on the user project specification.
+- [ ] Evaluate repository suitability, maintenance, security, and licensing evidence.
+- [ ] Select feature seeds and request approval only at policy gates.
+- [ ] Extract, adapt, integrate, verify, and boundedly repair.
+- [ ] Produce an auditable delivery report.
 
 ## First end-to-end demo
 
-Compose a small application using two public repositories and one target template. Limit the experiment to a single language ecosystem and two capabilities. The demo must include the source commit, license evidence, extracted file list, dependency closure, integration diff, and test results.
+Compose a small application using two public repositories and one target template. Limit the experiment to a single language ecosystem and two capabilities. The demo must include source commits, license evidence, extracted file list, dependency closure, integration diff, and test results.
 
 ## MVP non-goals
 
 - Multi-cloud deployment.
 - Multi-tenant SaaS.
-- Global capability marketplace.
+- Global public capsule marketplace.
 - Arbitrary language translation.
-- Automatic resolution of ambiguous licensing.
+- Automatic legal approval of ambiguous licensing.

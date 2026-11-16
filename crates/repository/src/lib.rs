@@ -271,10 +271,10 @@ fn inventory_manifests(
             _ => None,
         };
 
-        if let Some(language) = language {
-            if !languages.iter().any(|existing| existing == language) {
-                languages.push(language.to_owned());
-            }
+        if let Some(language) = language
+            && !languages.iter().any(|existing| existing == language)
+        {
+            languages.push(language.to_owned());
         }
     }
 

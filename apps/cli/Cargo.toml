@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 clap.workspace = true
 composer-core.workspace = true
+composer-intelligence.workspace = true
 composer-repository.workspace = true
 composer-api = { path = "../api" }
 serde_json.workspace = true

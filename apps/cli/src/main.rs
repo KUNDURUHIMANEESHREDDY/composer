@@ -2,6 +2,9 @@ use std::{error::Error, fs, net::SocketAddr, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 use composer_core::ProjectSpec;
+use composer_intelligence::{
+    CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
+};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -29,6 +32,45 @@ enum Command {
         #[arg(long, default_value = ".composer/sources")]
         workspace: PathBuf,
     },
+    /// Parse repository source and emit the symbol/import dependency graph.
+    Analyze {
+        /// Path to a previously acquired or local Git repository.
+        repository: PathBuf,
+        /// Optional destination for the full machine-readable graph.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Rank likely implementation symbols for a requested capability.
+    Recommend {
+        /// Path to an analyzed source repository.
+        repository: PathBuf,
+        /// Stable capability identifier, e.g. authentication.
+        #[arg(long)]
+        capability_id: String,
+        /// Human-readable capability requirement.
+        #[arg(long)]
+        description: String,
+        /// Maximum number of ranked seed candidates.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Build a Feature Capsule from selected symbol seeds and static dependencies.
+    Capsule {
+        /// Path to an analyzed source repository.
+        repository: PathBuf,
+        /// Stable capability identifier, e.g. authentication.
+        #[arg(long)]
+        capability_id: String,
+        /// Human-readable capability requirement.
+        #[arg(long)]
+        description: String,
+        /// One or more symbol IDs selected from an analysis/recommendation result.
+        #[arg(long = "seed-symbol", required = true)]
+        seed_symbols: Vec<String>,
+        /// New output directory; existing directories are never overwritten.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Start the local composition API.
     Serve {
         /// Address on which the API listens.
@@ -54,6 +96,52 @@ async fn main() -> Result<(), Box<dyn Error>> {
         } => {
             let inspection = composer_repository::acquire_and_inspect(&repository_url, &workspace)?;
             println!("{}", serde_json::to_string_pretty(&inspection)?);
+        }
+        Command::Analyze { repository, output } => {
+            let graph = analyze_repository(&repository)?;
+            if let Some(output) = output {
+                fs::write(&output, serde_json::to_vec_pretty(&graph)?)?;
+                println!(
+                    "Analysis written to {}\n{}",
+                    output.display(),
+                    serde_json::to_string_pretty(&graph.summary)?
+                );
+            } else {
+                println!("{}", serde_json::to_string_pretty(&graph)?);
+            }
+        }
+        Command::Recommend {
+            repository,
+            capability_id,
+            description,
+            limit,
+        } => {
+            let graph = analyze_repository(&repository)?;
+            let candidates = recommend_feature_seeds(&graph, &capability_id, &description, limit);
+            println!("{}", serde_json::to_string_pretty(&candidates)?);
+        }
+        Command::Capsule {
+            repository,
+            capability_id,
+            description,
+            seed_symbols,
+            output,
+        } => {
+            let graph = analyze_repository(&repository)?;
+            let result = create_feature_capsule(
+                &graph,
+                &CapsuleOptions {
+                    capability_id,
+                    description,
+                    seed_symbol_ids: seed_symbols,
+                    output_dir: output,
+                },
+            )?;
+            println!(
+                "Feature Capsule created at {}\n{}",
+                result.output_dir.display(),
+                serde_json::to_string_pretty(&result.manifest)?
+            );
         }
         Command::Serve { bind } => {
             println!("Starting Software Composer API on {bind}");
