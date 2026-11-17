@@ -537,6 +537,7 @@ mod tests {
                 line: 1,
                 resolution: ImportResolution::Local,
                 resolved_file: Some(PathBuf::from("src/token.rs")),
+                resolved_files: vec![PathBuf::from("src/token.rs")],
             }],
             references: vec![SymbolReference {
                 source_file: PathBuf::from("src/auth.rs"),

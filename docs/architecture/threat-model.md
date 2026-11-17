@@ -44,6 +44,12 @@ Treat repository contents, README files, comments, build files, package scripts,
 - Hash source snapshots and delivered artifacts.
 - Preserve license files and notices for reused code.
 - Record the evidence behind security and licensing decisions.
+- Verify each capsule-listed path, file type, byte size, and SHA-256 digest before compatibility analysis or staging.
+- Reject traversal paths, symlink components, duplicate normalized paths, and pre-existing integration destinations.
+- Copy only manifest-listed capsule files into a fresh target-local `.composer/integrations/` namespace; never overwrite target source.
+- Re-verify the staged capsule before atomically publishing the staging directory.
+- Do not install dependencies or invoke package lifecycle hooks, build scripts, tests, or source code during compatibility analysis/staging.
+- Treat target manifests, dependency constraints, symbol collision reports, and SPDX text as untrusted evidence; they are not resolver, semantic-equivalence, authenticity, or legal verdicts.
 
 ## Open risks
 

@@ -2,6 +2,9 @@ use std::{error::Error, fs, net::SocketAddr, path::PathBuf};
 
 use clap::{Parser, Subcommand};
 use composer_core::ProjectSpec;
+use composer_integration::{
+    IntegrationOptions, apply_integration, plan_integration, verify_capsule,
+};
 use composer_intelligence::{
     CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
 };
@@ -70,6 +73,31 @@ enum Command {
         /// New output directory; existing directories are never overwritten.
         #[arg(long)]
         output: PathBuf,
+    },
+    /// Independently verify every file in a Feature Capsule against its manifest.
+    VerifyCapsule {
+        /// Path to a Feature Capsule directory.
+        capsule: PathBuf,
+    },
+    /// Compare a verified Feature Capsule with a target repository.
+    Compatibility {
+        /// Path to a Feature Capsule directory.
+        capsule: PathBuf,
+        /// Target application repository.
+        target: PathBuf,
+        /// Optional path for the compatibility plan JSON.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Stage a verified Feature Capsule into a new target-local namespace.
+    Integrate {
+        /// Path to a Feature Capsule directory.
+        capsule: PathBuf,
+        /// Target application repository.
+        target: PathBuf,
+        /// New path inside the target repository; defaults to .composer/integrations/<capability-id>.
+        #[arg(long)]
+        destination: Option<PathBuf>,
     },
     /// Start the local composition API.
     Serve {
@@ -142,6 +170,40 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 result.output_dir.display(),
                 serde_json::to_string_pretty(&result.manifest)?
             );
+        }
+        Command::VerifyCapsule { capsule } => {
+            let result = verify_capsule(&capsule)?;
+            println!("{}", serde_json::to_string_pretty(&result.verification)?);
+        }
+        Command::Compatibility {
+            capsule,
+            target,
+            output,
+        } => {
+            let plan = plan_integration(&capsule, &target)?;
+            if let Some(output) = output {
+                fs::write(&output, serde_json::to_vec_pretty(&plan)?)?;
+                println!(
+                    "Compatibility plan written to {}\nlevel={:?} strategy={:?}",
+                    output.display(),
+                    plan.level,
+                    plan.strategy
+                );
+            } else {
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            }
+        }
+        Command::Integrate {
+            capsule,
+            target,
+            destination,
+        } => {
+            let result = apply_integration(&IntegrationOptions {
+                capsule_root: capsule,
+                target_root: target,
+                destination,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Command::Serve { bind } => {
             println!("Starting Software Composer API on {bind}");

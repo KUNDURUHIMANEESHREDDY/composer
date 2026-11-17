@@ -26,12 +26,16 @@ Choose the least invasive viable strategy:
 4. Transplant code only when the required dependency closure is understood and tests can verify it.
 5. Implement the missing portion when reuse is unsafe, incompatible, or more expensive than replacement.
 
-## Initial workspace boundaries
+## Workspace boundaries
 
 - `composer-core`: shared domain types and deterministic invariants.
 - `composer-api`: transport layer; owns HTTP routes and request/response mapping.
 - `composer-cli`: local developer interface.
-- Future crates should be introduced only when a subsystem has a stable contract and a meaningful independent test boundary.
+- `composer-repository`: public GitHub acquisition and bounded repository manifest inventory.
+- `composer-intelligence`: Tree-sitter analysis, repository graph, feature boundaries, and Feature Capsule creation.
+- `composer-integration`: capsule integrity verification, direct dependency inventory, advisory compatibility plans, draft adapter contracts, and safe staging.
+
+Subsystem crates are introduced where they have stable contracts and meaningful independent test boundaries.
 
 ## Project specification
 
@@ -62,6 +66,8 @@ Specification
   -> Verification and repair
   -> Provenance-backed delivery
 ```
+
+The current implementation reaches capsule verification, advisory compatibility planning, and non-destructive staging. This is not yet source-level integration: adapter code is not generated, target source is not rewritten, packages are not installed, and no repository build or test commands are executed. Sandboxed integration, verification, and bounded repair remain future work.
 
 ## Source of truth
 

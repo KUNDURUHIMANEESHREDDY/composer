@@ -45,7 +45,7 @@ The current analyzer fails the operation when the source-file cap is exceeded; f
 
 ## Graph schema
 
-The graph has schema version 1.
+The graph has schema version 2. Import dependency records can retain both a primary resolved path and all resolved package files (`resolved_files`) so a Go package import can close over every source file in its package directory.
 
 ### Nodes
 
@@ -57,17 +57,18 @@ The graph has schema version 1.
 ### Relationships and evidence
 
 - Imports are classified as `local`, `unresolved_or_external`, or `ambiguous`.
-- Call references are classified as `unique_name_match`, `ambiguous_name_match`, or `unresolved`.
+- Call references are classified as `scoped_name_match`, `same_file_name_match`, `unique_name_match`, `ambiguous_name_match`, or `unresolved`.
+- Resolution prefers a matching declaration in the enclosing scope, then a same-file match, then a unique repository-wide name match.
 - Symbol IDs are deterministic for an unchanged path, node kind, name, and byte start within the same source layout.
 
-A unique call-name match is not a compiler-verified reference. It can be incorrect when a repository has methods or functions with the same name in different scopes.
+These are still syntax- and name-based heuristics, not compiler-verified references. Incomplete scope modeling, overloads, receiver types, traits/interfaces, shadowing, macros, and dynamic dispatch can still produce false matches or unresolved references.
 
 ## Import resolver coverage
 
 - JavaScript/TypeScript/TSX: relative path imports with common source extensions and index files.
 - Python: dotted absolute module imports and common package-relative imports.
 - Rust: common `mod` declarations and approximate crate/self module paths.
-- Go: imports are extracted but not resolved yet because module-path and package-directory semantics require reading and applying the `go.mod` module path.
+- Go: local imports are mapped through the nearest `go.mod` module path to package directories; every Go source file in a resolved local package is retained in the graph's `resolved_files` closure.
 - External package imports remain unresolved. This is intentional; the resolver does not invent local files for package names.
 
 ## Capability matching
@@ -126,15 +127,25 @@ The current manifest copies the nearest known ancestor package manifests and roo
 - Existing output directories are never overwritten.
 - Capsule writes are staged in a unique temporary directory and renamed into place after manifest creation.
 
+## Integration engine (separate crate)
+
+`composer-integration` consumes a Feature Capsule and a target repository without mutating target source during analysis. It verifies capsule file inventory, byte sizes, safe relative paths, and SHA-256 hashes; inventories supported direct dependency declarations; analyzes the target's language/source/symbol profile; and emits compatibility findings plus a draft adapter contract.
+
+The current dependency inventory recognizes Cargo, npm, Python `pyproject.toml`/requirements, and Go module declarations. It compares declared direct dependency names and constraint text; it does not solve versions, inspect lockfile transitive graphs, contact registries, or prove dependency compatibility. SPDX expressions receive syntax parsing only; identifier validity, policy compatibility, and legal approval are not established.
+
+Compatibility is advisory. Symbol collision detection normalizes names and reports possible collisions, not semantic duplicates. Missing or differently constrained direct requirements, unresolved capsule imports, symbol collisions, and capsule syntax errors force `ReviewRequired`; otherwise, a cross-language plan can be `RequiresAdapter`. Test discovery uses repository path/name conventions and does not execute tests. Adapter contracts are drafts that require a human mapping review.
+
+The `integrate` command copies only manifest-listed capsule files and evidence into a new target-local `.composer/integrations/<capability-id>/` directory, then re-verifies the staged copy before finalizing it. Existing destinations are refused. Target source files are not overwritten; dependencies are not installed; repository scripts, builds, and tests are not run.
+
 ## Known gaps and next work
 
-1. Go module-aware import resolution.
-2. Rust Cargo crate/module-aware resolution and conditional compilation.
-3. Python namespace packages and all relative import forms.
-4. JavaScript package exports, tsconfig path aliases, and bundler resolution.
-5. Scope-aware symbol linking and reference confidence.
-6. Language-specific package dependency graph and lockfile analysis.
-7. File-level license evidence and SPDX expression parsing.
-8. Feature-level test discovery and extraction.
-9. Capsule self-validation and reproducible build verification in a sandbox.
-10. Adapter generation and integration into a target workspace.
+1. Rust Cargo crate/module-aware resolution and conditional compilation.
+2. Python namespace packages and all relative import forms.
+3. JavaScript package exports, tsconfig path aliases, and bundler resolution.
+4. Compiler/language-server-backed symbol linking and reference confidence.
+5. Language-specific package dependency resolution, lockfile graphs, and registry integrity.
+6. File-level license evidence, SPDX identifier validation, and policy evaluation.
+7. Signature-backed capsule provenance attestation and a trusted registry.
+8. Feature-level test extraction and contract mapping.
+9. Isolated, resource-limited builds/tests with default-deny network access.
+10. Production adapter generation, source-level patch planning, bounded repair, and rollback.

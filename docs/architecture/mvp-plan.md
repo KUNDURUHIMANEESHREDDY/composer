@@ -44,11 +44,11 @@ Prove that a capability can be found in an existing repository, analyzed, extrac
 - [x] Import relationships with local, unresolved, and ambiguous states.
 - [x] Call references with explicit name-match resolution states.
 - [x] Local import resolution for common Rust, Python, and JS/TS patterns.
-- [ ] Go module-aware package resolution.
+- [x] Go module-aware package resolution for local imports, including all source files in a package directory.
 - [ ] Rust Cargo-aware module/crate resolution.
 - [ ] Python namespace package and relative-import completeness.
 - [ ] TypeScript tsconfig paths, package exports, and bundler resolution.
-- [ ] Scope-aware semantic symbol resolution.
+- [x] Heuristic scope-aware symbol resolution, preferring enclosing scope and same-file matches before unique repository-wide matches.
 
 ## Milestone 4 — Feature boundaries and capsules (initial implementation complete)
 
@@ -60,21 +60,25 @@ Prove that a capability can be found in an existing repository, analyzed, extrac
 - [x] SHA-256 digest for each capsule file.
 - [x] Source Git URL/commit/tree metadata when available.
 - [x] Refuse existing output directories and source/output overlap.
-- [ ] Parse dependency manifests into transitive package dependency closure.
-- [ ] Detect file-level license headers and parse SPDX expressions.
-- [ ] Add feature-specific tests and independent capsule verification.
-- [ ] Add capsule provenance attestation and registry.
+- [ ] Resolve transitive package dependency closure and lockfile versions.
+- [ ] Detect file-level license headers and evaluate SPDX identifiers/compatibility policy.
+- [x] Independently verify capsule paths, sizes, and SHA-256 digests against the manifest.
+- [ ] Add producer-signed capsule provenance attestation and registry.
 
-Important: a Feature Capsule is currently a traceable extraction bundle, not a guaranteed standalone package or integration-ready module.
+A Feature Capsule remains a traceable extraction bundle, not a guaranteed standalone package. Hash verification establishes internal consistency, not producer authenticity or legal clearance.
 
-## Milestone 5 — Compatibility and integration
+## Milestone 5 — Compatibility and integration (static planning and safe staging implemented)
 
-- [ ] Inspect target project architecture.
-- [ ] Detect existing equivalent capabilities.
-- [ ] Generate an integration plan and adapter contracts.
-- [ ] Apply changes in a disposable target workspace.
-- [ ] Run unit, contract, integration, and regression tests.
-- [ ] Record transformations and results.
+- [x] Inspect target project languages, source/symbol inventory, package managers, and test-file conventions.
+- [x] Detect normalized symbol-name collisions as review findings; semantic equivalence detection remains future work.
+- [x] Compare declared direct dependencies and report exact, missing, and differing constraints.
+- [x] Generate a compatibility plan and draft adapter contract with unresolved mapping questions.
+- [x] Stage verified capsule files and plan evidence into a new target-local `.composer/integrations/<capability-id>/` namespace without overwriting target source.
+- [x] Re-verify staged capsule contents and manifest hash before publishing the staging directory.
+- [ ] Generate production adapter implementation and apply source-level integration patches.
+- [ ] Resolve dependency versions, install packages, and validate lockfiles.
+- [ ] Run unit, contract, integration, and regression tests in a disposable sandbox.
+- [ ] Add bounded repair, rollback, and a complete transformation/test evidence report.
 
 ## Milestone 6 — Autonomous engineering loop
 

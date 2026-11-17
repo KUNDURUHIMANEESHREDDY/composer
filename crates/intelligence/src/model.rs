@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::SourceLanguage;
 
-pub const GRAPH_SCHEMA_VERSION: u32 = 1;
+pub const GRAPH_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryGraph {
@@ -66,7 +66,11 @@ pub struct ImportDependency {
     pub kind: String,
     pub line: usize,
     pub resolution: ImportResolution,
+    /// First resolved path retained for graph schema v1 consumers.
     pub resolved_file: Option<PathBuf>,
+    /// All files that make up a resolved package import (notably Go packages).
+    #[serde(default)]
+    pub resolved_files: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +94,8 @@ pub struct SymbolReference {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SymbolResolution {
+    ScopedNameMatch,
+    SameFileNameMatch,
     UniqueNameMatch,
     AmbiguousNameMatch,
     Unresolved,

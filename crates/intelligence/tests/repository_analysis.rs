@@ -193,3 +193,50 @@ fn resolves_rust_modules_using_nested_cargo_package_roots() {
 
     let _ = fs::remove_dir_all(workspace);
 }
+
+#[test]
+fn resolves_go_module_imports_to_all_files_in_a_local_package() {
+    let workspace = temporary_workspace();
+    let repository = workspace.join("go-project");
+    fs::create_dir_all(repository.join("cmd")).unwrap();
+    fs::create_dir_all(repository.join("internal/auth")).unwrap();
+
+    fs::write(
+        repository.join("go.mod"),
+        "module example.com/composer\ngo 1.22\n",
+    )
+    .unwrap();
+    fs::write(
+        repository.join("cmd/main.go"),
+        "package main\nimport \"example.com/composer/internal/auth\"\nfunc main() { auth.Start() }\n",
+    )
+    .unwrap();
+    fs::write(
+        repository.join("internal/auth/auth.go"),
+        "package auth\nfunc Start() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        repository.join("internal/auth/token.go"),
+        "package auth\nfunc Verify() bool { return true }\n",
+    )
+    .unwrap();
+
+    let graph = analyze_repository(&repository).unwrap();
+    let dependency = graph
+        .imports
+        .iter()
+        .find(|item| item.target == "example.com/composer/internal/auth")
+        .expect("local Go module import should be present");
+
+    assert_eq!(dependency.resolution, ImportResolution::Local);
+    assert_eq!(
+        dependency.resolved_files,
+        vec![
+            PathBuf::from("internal/auth/auth.go"),
+            PathBuf::from("internal/auth/token.go")
+        ]
+    );
+
+    let _ = fs::remove_dir_all(workspace);
+}

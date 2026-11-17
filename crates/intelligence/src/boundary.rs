@@ -126,10 +126,15 @@ pub fn analyze_feature_boundary(
         {
             match import.resolution {
                 ImportResolution::Local => {
-                    if let Some(target) = &import.resolved_file
-                        && included_files.insert(target.clone())
-                    {
-                        pending_files.push_back(target.clone());
+                    let targets = if import.resolved_files.is_empty() {
+                        import.resolved_file.iter().cloned().collect::<Vec<_>>()
+                    } else {
+                        import.resolved_files.clone()
+                    };
+                    for target in targets {
+                        if included_files.insert(target.clone()) {
+                            pending_files.push_back(target);
+                        }
                     }
                 }
                 ImportResolution::UnresolvedOrExternal | ImportResolution::Ambiguous => {
@@ -147,7 +152,9 @@ pub fn analyze_feature_boundary(
             .filter(|reference| reference.source_file == file_path)
         {
             match reference.resolution {
-                SymbolResolution::UniqueNameMatch => {
+                SymbolResolution::ScopedNameMatch
+                | SymbolResolution::SameFileNameMatch
+                | SymbolResolution::UniqueNameMatch => {
                     if let Some(target_id) = &reference.resolved_symbol_id {
                         if let Some(target_symbol) = symbols_by_id.get(target_id.as_str()) {
                             if included_files.contains(&target_symbol.file_path) {
@@ -411,6 +418,7 @@ mod tests {
                 line: 1,
                 resolution: ImportResolution::Local,
                 resolved_file: Some(PathBuf::from("src/token.rs")),
+                resolved_files: vec![PathBuf::from("src/token.rs")],
             }],
             references: vec![
                 SymbolReference {

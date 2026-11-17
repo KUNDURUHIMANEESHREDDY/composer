@@ -2,7 +2,7 @@
 
 A Rust-first autonomous software composition agent. It aims to build applications by discovering, extracting, adapting, integrating, and verifying reusable capabilities from existing software repositories instead of rebuilding every capability from scratch.
 
-> **Status: intelligence foundation implemented.** The project now has a Rust workspace, GitHub source acquisition, Tree-sitter parsing for six language variants, repository symbol/import analysis, heuristic capability seed recommendations, conservative feature-boundary analysis, and versioned Feature Capsule export. Autonomous multi-repository integration, semantic/ compiler-grade dependency resolution, and sandboxed builds remain under development.
+> **Status: repository intelligence and safe capsule staging implemented.** The project has a Rust workspace, GitHub source acquisition, Tree-sitter parsing for six language variants, a versioned repository graph, conservative Feature Capsule extraction and integrity verification, direct dependency-manifest inventory, advisory target compatibility analysis, draft adapter contracts, and non-destructive capsule staging. Compiler-grade resolution, production adapter generation, package solving, and sandboxed builds/tests remain under development.
 
 ## Design principles
 
@@ -23,6 +23,7 @@ A Rust-first autonomous software composition agent. It aims to build application
 | `crates/core` | Shared domain types and validation |
 | `crates/repository` | GitHub acquisition and bounded manifest inventory |
 | `crates/intelligence` | Tree-sitter parsing, repository graph, feature boundaries, Feature Capsules |
+| `crates/integration` | Capsule integrity verification, dependency inventory, compatibility plans, adapter contracts, safe staging |
 | `docs/architecture` | System design, intelligence model, MVP and threat model |
 | `docs/adr` | Architecture decision records |
 | `examples` | Example project specifications |
@@ -64,6 +65,24 @@ Build a Feature Capsule from one or more selected symbol IDs returned by analysi
 cargo run -p composer-cli -- capsule .composer/sources/<checkout> --capability-id authentication --description "Authenticate users and validate sessions" --seed-symbol <symbol-id> --output .composer/capsules/authentication
 ```
 
+Verify capsule contents against the manifest (paths, file sizes, and SHA-256 digests):
+
+```powershell
+cargo run -p composer-cli -- verify-capsule .composer/capsules/authentication
+```
+
+Compare a capsule with a target repository and write the advisory compatibility plan:
+
+```powershell
+cargo run -p composer-cli -- compatibility .composer/capsules/authentication . --output .composer/compatibility-plan.json
+```
+
+Stage the verified capsule into a new target-local namespace:
+
+```powershell
+cargo run -p composer-cli -- integrate .composer/capsules/authentication .
+```
+
 Start the API:
 
 ```powershell
@@ -91,9 +110,9 @@ The parser currently supports Rust, Python, JavaScript, TypeScript, TSX, and Go 
 
 ### Repository graph
 
-The graph contains files, symbols, import edges, call references, resolution status, and summary counts. Local import resolution is currently implemented for common Rust module paths, JavaScript/TypeScript relative imports, and Python module imports. Third-party imports and unsupported forms remain explicitly unresolved or ambiguous.
+The graph schema is version 2 and contains files, symbols, import edges, call references, resolution status, and summary counts. Local import resolution covers common Rust module paths, JavaScript/TypeScript relative imports, Python module imports, and Go module-aware local package imports. Go imports retain all source files in the resolved package directory. Third-party imports and unsupported forms remain explicitly unresolved or ambiguous.
 
-Call references are linked in the repository graph only when an exact symbol name has one repository-wide match. This is a heuristic, not compiler name resolution. Same-file overloading, traits, macros, dynamic imports, reflection, dependency injection, and runtime registration are not fully modeled.
+Call references prefer enclosing-scope matches, then same-file matches, then unique repository-wide name matches. This remains heuristic rather than compiler name resolution. Overloading, receiver types, traits/interfaces, macros, dynamic imports, reflection, dependency injection, and runtime registration are not fully modeled.
 
 ### Feature boundaries
 
@@ -111,22 +130,28 @@ A capsule contains:
 
 Capsule creation refuses to overwrite an existing directory, rejects source symlinks, and refuses output directories that overlap the source repository. `license_review_required` is always true: license evidence is copied, not legally interpreted or cleared.
 
-The capsule is an extraction artifact, not a guaranteed standalone package. It is not yet automatically adapted, built, or tested.
+The capsule is an extraction artifact, not a guaranteed standalone package. Its manifest hashes can be independently checked for internal consistency, but the current format does not provide a producer signature or authenticity attestation.
+
+## Compatibility and integration
+
+`composer compatibility` verifies a capsule, analyzes the target repository, inventories direct dependencies from Cargo, npm, Python, and Go manifests, and reports language alignment, normalized symbol-name collisions, test-file candidates, manifest warnings, and a compatibility level. The plan is advisory: symbol collisions, missing/different direct requirements, unresolved capsule imports, or capsule syntax errors force `ReviewRequired`; cross-language plans can return `RequiresAdapter` when no review blocker takes precedence. Direct dependency constraint strings are compared without solving versions or transitive dependencies, and normalized name collisions are not proof of semantic equivalence.
+
+The generated adapter contract is a draft that lists candidate symbols and unresolved mapping questions. `composer integrate` stages only manifest-listed capsule files plus plan, verification, adapter-contract, and handoff documentation into a new `.composer/integrations/<capability-id>/` directory. It refuses to overwrite an existing destination and re-verifies the staged capsule before finalizing the directory.
+
+This is safe staging, not source-level integration: it does not rewrite target files, generate production adapter code, install dependencies, run repository scripts, build, or test.
 
 ## Current limitations
 
 - Public HTTPS GitHub acquisition only; shallow default-branch checkout.
 - No private-repository credential broker.
-- Supported syntax grammars do not imply complete semantic analysis.
-- Go imports are parsed but are not mapped through `go.mod` yet.
-- Rust resolution is approximate and does not understand the full Cargo module/crate model.
-- Python package-relative cases such as `from . import sibling` remain unresolved.
-- Dependency manifests are copied as evidence; transitive package dependencies are not yet calculated.
-- Feature ranking is lexical, not embedding-based.
-- Feature boundaries are conservative file-level approximations.
-- License identification/policy evaluation and vulnerability scanning are not yet wired into capsule decisions.
-- Capsules are not yet integrated into a target project.
-- No untrusted repository build/test execution is enabled; sandboxed verification remains a separate milestone.
+- Supported syntax grammars do not imply complete semantic analysis; Rust module resolution remains approximate.
+- Python package-relative edge cases, TypeScript path aliases/package exports, and compiler-grade symbol resolution remain incomplete.
+- Dependency inventory covers selected direct manifest declarations; transitive resolution, lockfile solving, registry integrity, and vulnerability scanning are not implemented.
+- SPDX expressions are syntax-checked only; license identifiers, policy compatibility, and legal approval are not established.
+- Feature ranking is lexical, not embedding-based; feature boundaries are conservative file-level approximations.
+- Adapter contracts require human review; production adapter generation and source-level patching are not implemented.
+- Capsule hash verification does not attest producer authenticity.
+- No untrusted repository build/test execution is enabled; sandboxed verification and bounded repair remain future work.
 
 ## Development checks
 
