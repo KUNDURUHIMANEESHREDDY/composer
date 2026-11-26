@@ -16,7 +16,8 @@ pub use boundary::{
     recommend_feature_seeds,
 };
 pub use capsule::{
-    CapsuleError, CapsuleManifest, CapsuleOptions, CapsuleResult, create_feature_capsule,
+    CapsuleError, CapsuleFile, CapsuleManifest, CapsuleOptions, CapsuleResult,
+    create_feature_capsule,
 };
 pub use language::SourceLanguage;
 pub use model::{

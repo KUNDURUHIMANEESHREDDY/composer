@@ -75,7 +75,9 @@ A Feature Capsule remains a traceable extraction bundle, not a guaranteed standa
 - [x] Generate a compatibility plan and draft adapter contract with unresolved mapping questions.
 - [x] Stage verified capsule files and plan evidence into a new target-local `.composer/integrations/<capability-id>/` namespace without overwriting target source.
 - [x] Re-verify staged capsule contents and manifest hash before publishing the staging directory.
-- [ ] Generate production adapter implementation and apply source-level integration patches.
+- [x] Opt-in single-file Rust module wiring with backup, collision checks, and explicit review assertion (narrow first source-level slice).
+- [x] Verified-copy Rust integration: conservative direct dependency adoption, offline Cargo lockfile resolution and offline Docker tests with limited resources and no network (narrow first sandbox slice).
+- [ ] Generate general-purpose production adapters and apply multi-file/cross-language integration patches.
 - [ ] Resolve dependency versions, install packages, and validate lockfiles.
 - [ ] Run unit, contract, integration, and regression tests in a disposable sandbox.
 - [ ] Add bounded repair, rollback, and a complete transformation/test evidence report.

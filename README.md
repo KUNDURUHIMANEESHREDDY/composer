@@ -2,7 +2,7 @@
 
 A Rust-first autonomous software composition agent. It aims to build applications by discovering, extracting, adapting, integrating, and verifying reusable capabilities from existing software repositories instead of rebuilding every capability from scratch.
 
-> **Status: repository intelligence and safe capsule staging implemented.** The project has a Rust workspace, GitHub source acquisition, Tree-sitter parsing for six language variants, a versioned repository graph, conservative Feature Capsule extraction and integrity verification, direct dependency-manifest inventory, advisory target compatibility analysis, draft adapter contracts, and non-destructive capsule staging. Compiler-grade resolution, production adapter generation, package solving, and sandboxed builds/tests remain under development.
+> **Status: repository intelligence, safe capsule staging, and restricted Rust integration verification implemented.** The project supports GitHub acquisition, six-language Tree-sitter analysis, a versioned repository graph, conservative Feature Capsules, direct dependency inventories, compatibility plans, and isolated staging. An opt-in single-file Rust workflow can now wire reviewed code, adopt version-only direct dependencies, solve an offline Cargo lockfile, and run Docker-isolated tests against a new target copy. General-purpose adapter generation, complex dependency solving, hostile-code isolation hardening, and autonomous repair remain under development.
 
 ## Design principles
 
@@ -91,6 +91,17 @@ cargo run -p composer-cli -- wire-rust .composer/capsules/authentication path/to
 
 The flag records an explicit review assertion; Composer does not perform legal approval. This command requires exactly one Rust source file, existing matching direct dependencies, no unresolved/unfollowed references, no symbol collisions, and a Rust `src/lib.rs` or `src/main.rs` target. It creates `src/composer_<capability>.rs`, adds a module declaration to the target entrypoint, and preserves a `src/.composer_<capability>.root-backup` file. It **does not** run untrusted code, prove compilation, or install dependencies. Use an approved isolated build/test environment before trusting the integration.
 
+Run **offline, isolated build verification** on a **new copy** of a reviewed Rust target:
+
+```powershell
+docker pull rust:1.99-slim # one-time setup; image is never pulled during a verification run
+cargo run -p composer-cli -- verify-rust .composer/capsules/authentication path/to/target --output path/to/new-verified-target --license-reviewed --registry-cache "$HOME/.cargo/registry"
+```
+
+The registry-cache argument is optional for targets with no external dependencies and must point to a Cargo registry directory. The cache is mounted **read-only**. Only simple, version-only direct Cargo dependencies are adopted, and differing existing constraints are rejected. Cargo performs offline transitive resolution, writes a resolved `Cargo.lock`, then compiles and runs target tests. The original target is unchanged; Composer publishes the new output only after success, alongside `composer-build-evidence.json`. Failures leave no published output.
+
+Verification uses the existing local `rust:1.99-slim` Docker image with network disabled, a read-only container root, an unprivileged user, reduced Linux capabilities, CPU/memory/process limits, and a 240-second timeout. **Docker containers are not a perfect security boundary**; use a dedicated locked-down VM or hardened runner for genuinely hostile inputs. The source still requires independent license and security review. Offline dependency resolution only works when required crates are already cached. Cargo workspaces, cross-language adapters, path/git dependencies, nontrivial dependency migrations, and arbitrary source dependency graphs remain unsupported.
+
 Start the API:
 
 ```powershell
@@ -146,7 +157,7 @@ The capsule is an extraction artifact, not a guaranteed standalone package. Its 
 
 The generated adapter contract is a draft that lists candidate symbols and unresolved mapping questions. `composer integrate` stages only manifest-listed capsule files plus plan, verification, adapter-contract, and handoff documentation into a new `.composer/integrations/<capability-id>/` directory. It refuses to overwrite an existing destination and re-verifies the staged capsule before finalizing the directory.
 
-`composer integrate` remains safe staging only. A separate opt-in `composer wire-rust` command implements a restricted single-file Rust source-level integration path, with a persistent entrypoint backup and fail-closed compatibility gates. General-purpose adapter generation, source rewrites, dependency solving and sandboxed verification remain unimplemented.
+`composer integrate` remains safe staging only. The opt-in `composer wire-rust` command provides restricted single-file Rust wiring with a persistent entrypoint backup. `composer verify-rust` extends it with conservative missing-dependency adoption, offline Cargo lockfile solving, and Docker-isolated compilation/tests on a newly generated target copy; it publishes the copy and evidence only after success. General-purpose adapter generation and broader dependency solving remain unimplemented.
 
 ## Current limitations
 
@@ -154,12 +165,12 @@ The generated adapter contract is a draft that lists candidate symbols and unres
 - No private-repository credential broker.
 - Supported syntax grammars do not imply complete semantic analysis; Rust module resolution remains approximate.
 - Python package-relative edge cases, TypeScript path aliases/package exports, and compiler-grade symbol resolution remain incomplete.
-- Dependency inventory covers selected direct manifest declarations; transitive resolution, lockfile solving, registry integrity, and vulnerability scanning are not implemented.
+- Dependency inventory covers selected direct manifest declarations. Only `verify-rust` performs offline transitive Cargo resolution for supported standalone targets with pre-cached crates; general package solving, registry integrity and vulnerability scanning are not implemented.
 - SPDX expressions are syntax-checked only; license identifiers, policy compatibility, and legal approval are not established.
 - Feature ranking is lexical, not embedding-based; feature boundaries are conservative file-level approximations.
 - Adapter contracts require human review; general-purpose production adapter generation and multi-file/cross-language source patching are not implemented. The opt-in `wire-rust` path supports only standalone single-file Rust modules.
 - Capsule hash verification does not attest producer authenticity.
-- No untrusted repository build/test execution is enabled; sandboxed verification and bounded repair remain future work.
+- `verify-rust` runs untrusted code only inside a restricted Docker container. This is not VM-grade isolation; general-purpose hardened build infrastructure, adversarial testing and bounded repair remain future work.
 
 ## Development checks
 
