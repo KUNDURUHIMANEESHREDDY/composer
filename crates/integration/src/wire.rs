@@ -57,6 +57,22 @@ pub enum RustWiringError {
 /// Untrusted source is never executed by Composer. Compilation and tests require
 /// a separately approved, isolated execution environment.
 pub fn wire_rust_module(options: &RustWiringOptions) -> Result<RustWiringResult, RustWiringError> {
+    wire_rust_module_internal(options, false)
+}
+
+// This internal-only path is called on a disposable target that must pass
+// offline compilation and tests before it can be published. It can defer
+// heuristic unresolved call references to the Rust compiler.
+pub(crate) fn wire_rust_module_for_verified_sandbox(
+    options: &RustWiringOptions,
+) -> Result<RustWiringResult, RustWiringError> {
+    wire_rust_module_internal(options, true)
+}
+
+fn wire_rust_module_internal(
+    options: &RustWiringOptions,
+    defer_calls_to_compiler: bool,
+) -> Result<RustWiringResult, RustWiringError> {
     if !options.license_reviewed {
         return Err(RustWiringError::ReviewRequired);
     }
@@ -82,7 +98,7 @@ pub fn wire_rust_module(options: &RustWiringOptions) -> Result<RustWiringResult,
         ));
     }
     if !verified.manifest.external_or_unresolved_imports.is_empty()
-        || !verified.manifest.unfollowed_symbol_references.is_empty()
+        || (!defer_calls_to_compiler && !verified.manifest.unfollowed_symbol_references.is_empty())
     {
         return Err(RustWiringError::Unsupported(
             "capsule has unresolved imports or unfollowed symbol references".into(),

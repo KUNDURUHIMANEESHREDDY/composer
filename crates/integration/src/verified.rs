@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::{RustWiringOptions, verify_capsule, wire_rust_module};
+use crate::{RustWiringOptions, verify_capsule, wire::wire_rust_module_for_verified_sandbox};
 
 const DEFAULT_IMAGE: &str = "rust:1.99-slim";
 const MAX_FILES: usize = 1500;
@@ -136,7 +136,7 @@ pub fn compose_verified_rust(
     let outcome = (|| {
         copy_bounded_target(&source, &staged)?;
         let added = merge_direct_cargo_dependencies(&capsule.manifest, &capsule.root, &staged)?;
-        let wired = wire_rust_module(&RustWiringOptions {
+        let wired = wire_rust_module_for_verified_sandbox(&RustWiringOptions {
             capsule_root: capsule.root.clone(),
             target_root: staged.clone(),
             license_reviewed: true,
