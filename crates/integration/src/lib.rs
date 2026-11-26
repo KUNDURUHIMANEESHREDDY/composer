@@ -5,6 +5,7 @@ mod apply;
 mod compatibility;
 mod dependencies;
 mod verify;
+mod wire;
 
 pub use apply::{IntegrationError, IntegrationOptions, IntegrationResult, apply_integration};
 pub use compatibility::{
@@ -17,3 +18,4 @@ pub use dependencies::{
     LicenseDeclaration, RequirementStatus,
 };
 pub use verify::{CapsuleVerification, VerificationError, VerifiedCapsule, verify_capsule};
+pub use wire::{RustWiringError, RustWiringOptions, RustWiringResult, wire_rust_module};

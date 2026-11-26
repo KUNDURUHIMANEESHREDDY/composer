@@ -256,7 +256,6 @@ dependencies = [
 name = "composer-intelligence"
 version = "0.1.0"
 dependencies = [
- "composer-repository",
  "serde",
  "serde_json",
  "sha2",
