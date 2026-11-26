@@ -2,6 +2,7 @@
 //! target compatibility analysis, and safe isolated integration staging.
 
 mod apply;
+mod batch;
 mod compatibility;
 mod dependencies;
 mod verified;
@@ -9,6 +10,9 @@ mod verify;
 mod wire;
 
 pub use apply::{IntegrationError, IntegrationOptions, IntegrationResult, apply_integration};
+pub use batch::{
+    BatchRustError, BatchRustOptions, BatchRustResult, BatchStep, compose_verified_rust_batch,
+};
 pub use compatibility::{
     AdapterContract, CompatibilityError, CompatibilityFinding, CompatibilityLevel,
     CompatibilityPlan, IntegrationStrategy, SymbolCollision, TargetProfile, TestEvidence,

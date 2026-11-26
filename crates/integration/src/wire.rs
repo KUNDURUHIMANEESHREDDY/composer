@@ -78,16 +78,21 @@ fn wire_rust_module_internal(
     }
     let verified = verify_capsule(&options.capsule_root)?;
     let plan = plan_integration(&options.capsule_root, &options.target_root)?;
-    if plan.level != CompatibilityLevel::Compatible
-        || !plan.symbol_collisions.is_empty()
-        || plan
-            .dependencies
-            .iter()
-            .any(|d| d.status != RequirementStatus::AlreadyPresent)
+    // Verified-only wiring can tolerate heuristic name collisions because
+    // the new source resides in a distinct Rust module and must pass actual
+    // compilation/tests before publishing. The unverified path remains strict.
+    if plan.dependencies.iter().any(|d| {
+        d.status != RequirementStatus::AlreadyPresent
+            && !(defer_calls_to_compiler && d.status == RequirementStatus::DifferentConstraint)
+    }) || (!defer_calls_to_compiler
+        && (plan.level != CompatibilityLevel::Compatible || !plan.symbol_collisions.is_empty()))
+        || matches!(
+            plan.level,
+            CompatibilityLevel::Incompatible | CompatibilityLevel::RequiresAdapter
+        )
     {
         return Err(RustWiringError::Unsupported(
-            "compatibility requires review, has symbol collisions or unresolved dependencies"
-                .into(),
+            "incompatible language, unresolved dependencies, or unsafe unverified collision".into(),
         ));
     }
     if plan.source_languages != [SourceLanguage::Rust]
@@ -142,21 +147,33 @@ fn wire_rust_module_internal(
     let bytes = fs::read(verified.root.join(&source.capsule_path))?;
     let content = std::str::from_utf8(&bytes)
         .map_err(|_| RustWiringError::Unsupported("source is not UTF-8".into()))?;
-    // Exclude path-sensitive or macro-time inclusion constructs until compiler-grade
-    // dependency closure and an execution sandbox are available.
+    // Reject crate-root sensitive references and file inclusion even in the
+    // sandbox. Verified mode may accept inline modules and super:: because
+    // they are rechecked by the compiler and target tests before publication.
     for unsupported in [
         "crate::",
-        "super::",
         "include!",
         "include_str!",
         "include_bytes!",
         "#[path",
-        "mod ",
+        "#[macro_export",
+        "#[global_allocator",
+        "#[no_mangle",
+        "extern crate ",
     ] {
         if content.contains(unsupported) {
             return Err(RustWiringError::Unsupported(format!(
                 "source contains path-sensitive construct: {unsupported}"
             )));
+        }
+    }
+    if !defer_calls_to_compiler {
+        for unsupported in ["super::", "mod "] {
+            if content.contains(unsupported) {
+                return Err(RustWiringError::Unsupported(format!(
+                    "unverified wiring rejects module-sensitive construct: {unsupported}"
+                )));
+            }
         }
     }
 

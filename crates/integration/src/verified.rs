@@ -37,6 +37,7 @@ pub struct VerifiedRustResult {
     pub output_root: PathBuf,
     pub capsule_id: String,
     pub new_dependencies: Vec<String>,
+    pub compatible_constraints_retained: Vec<String>,
     pub docker_image: String,
     pub offline_lockfile_resolved: bool,
     pub isolated_tests_passed: bool,
@@ -49,6 +50,7 @@ struct BuildEvidence {
     schema_version: u32,
     capsule_id: String,
     image: String,
+    image_id: String,
     network_disabled: bool,
     read_only_container_root: bool,
     unprivileged_user: String,
@@ -56,6 +58,8 @@ struct BuildEvidence {
     memory_limit: String,
     commands: Vec<String>,
     dependencies_added: Vec<String>,
+    compatible_constraints_retained: Vec<String>,
+    repair_actions: Vec<String>,
     tests_passed: bool,
     elapsed_seconds: f64,
     log_tail: String,
@@ -141,8 +145,16 @@ pub fn compose_verified_rust(
             target_root: staged.clone(),
             license_reviewed: true,
         })?;
+        let image_id = inspect_local_image_id()?;
+        let user = nonroot_container_user()?;
         let start = Instant::now();
-        let logs = docker_build(&staged, &results, options.registry_cache.as_deref())?;
+        let logs = docker_build(
+            &staged,
+            &results,
+            options.registry_cache.as_deref(),
+            &image_id,
+            &user,
+        )?;
         let elapsed = start.elapsed().as_secs_f64();
         let resolved_lock = results.join("Cargo.lock");
         let lock_meta = fs::symlink_metadata(&resolved_lock)?;
@@ -151,23 +163,38 @@ pub fn compose_verified_rust(
                 "container did not produce a regular, bounded lockfile".into(),
             ));
         }
+        let compatible_constraints_retained = verify_locked_source_constraints(
+            &capsule.manifest,
+            &capsule.root,
+            &staged.join("Cargo.toml"),
+            &resolved_lock,
+        )?;
         fs::copy(&resolved_lock, staged.join("Cargo.lock"))?;
         let evidence_name = PathBuf::from("composer-build-evidence.json");
         let evidence = BuildEvidence {
             schema_version: 1,
             capsule_id: wired.capsule_id.clone(),
             image: DEFAULT_IMAGE.into(),
+            image_id: image_id.clone(),
             network_disabled: true,
             read_only_container_root: true,
-            unprivileged_user: "65534:65534".into(),
+            unprivileged_user: user.clone(),
             cpu_limit: "1".into(),
             memory_limit: "1024m".into(),
             commands: vec![
-                "cargo generate-lockfile --offline".into(),
-                "cargo test --locked --offline --all-targets".into(),
+                "cargo test --locked --offline --all-targets (initial attempt)".into(),
+                "cargo generate-lockfile --offline (at most once on explicit stale lockfile error)"
+                    .into(),
+                "cargo test --locked --offline --all-targets (only after lock repair)".into(),
                 "cargo tree --locked --offline --depth 2".into(),
             ],
             dependencies_added: added.clone(),
+            compatible_constraints_retained: compatible_constraints_retained.clone(),
+            repair_actions: if logs.contains("COMPOSER_REPAIR: lockfile_regenerated") {
+                vec!["lockfile_regenerated_once_after_missing_or_stale_check".into()]
+            } else {
+                Vec::new()
+            },
             tests_passed: true,
             elapsed_seconds: elapsed,
             log_tail: logs,
@@ -181,6 +208,7 @@ pub fn compose_verified_rust(
             output_root: output.clone(),
             capsule_id: wired.capsule_id,
             new_dependencies: added,
+            compatible_constraints_retained,
             docker_image: DEFAULT_IMAGE.into(),
             offline_lockfile_resolved: true,
             isolated_tests_passed: true,
@@ -396,9 +424,25 @@ fn merge_direct_cargo_dependencies(
                 added.push(format!("{name} = {version}"));
             }
             Some(existing) if existing == requested => {}
+            Some(existing) if existing.as_str().is_some() => {
+                // Bounded reconciliation: keep the target's own requirement
+                // and let offline Cargo resolve it. Verify that the LOCKED
+                // version satisfies BOTH requirements before publishing.
+                let target_version = existing.as_str().expect("checked");
+                semver::VersionReq::parse(version).map_err(|err| {
+                    VerifiedRustError::Dependency(format!(
+                        "invalid source version requirement for {name}: {err}"
+                    ))
+                })?;
+                semver::VersionReq::parse(target_version).map_err(|err| {
+                    VerifiedRustError::Dependency(format!(
+                        "invalid target version requirement for {name}: {err}"
+                    ))
+                })?;
+            }
             Some(_) => {
                 return Err(VerifiedRustError::Dependency(format!(
-                    "conflicting dependency {name}; will not overwrite existing constraint"
+                    "conflicting dependency {name} uses unsupported non-version requirement"
                 )));
             }
         }
@@ -409,6 +453,95 @@ fn merge_direct_cargo_dependencies(
             .map_err(|err| VerifiedRustError::Toml(err.to_string()))?,
     )?;
     Ok(added)
+}
+
+/// Verify that Cargo's chosen version of every direct source dependency
+/// satisfies BOTH the source constraint and the retained target constraint.
+/// A successful compilation alone is insufficient to prove this requirement.
+fn verify_locked_source_constraints(
+    manifest: &CapsuleManifest,
+    capsule_root: &Path,
+    target_manifest: &Path,
+    lockfile: &Path,
+) -> Result<Vec<String>, VerifiedRustError> {
+    let source = manifest
+        .files
+        .iter()
+        .find(|entry| {
+            entry.file_kind == "dependency_manifest"
+                && entry.source_path.as_deref() == Some(Path::new("Cargo.toml"))
+        })
+        .ok_or_else(|| VerifiedRustError::Dependency("source Cargo.toml missing".into()))?;
+    let source_toml: toml::Value = toml::from_str(&fs::read_to_string(
+        capsule_root.join(&source.capsule_path),
+    )?)
+    .map_err(|err| VerifiedRustError::Toml(err.to_string()))?;
+    let target_toml: toml::Value = toml::from_str(&fs::read_to_string(target_manifest)?)
+        .map_err(|err| VerifiedRustError::Toml(err.to_string()))?;
+    let lock: toml::Value = toml::from_str(&fs::read_to_string(lockfile)?)
+        .map_err(|err| VerifiedRustError::Toml(err.to_string()))?;
+    let packages = lock
+        .get("package")
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| {
+            VerifiedRustError::Dependency("resolved Cargo.lock has no packages".into())
+        })?;
+    let source_deps = source_toml
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| VerifiedRustError::Dependency("source has no [dependencies]".into()))?;
+    let target_deps = target_toml
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| VerifiedRustError::Dependency("target has no [dependencies]".into()))?;
+    let mut reconciled = Vec::new();
+    for (name, original) in source_deps {
+        let requirement = original.as_str().ok_or_else(|| {
+            VerifiedRustError::Dependency(format!("{name} has unsupported dependency form"))
+        })?;
+        let parsed = semver::VersionReq::parse(requirement).map_err(|err| {
+            VerifiedRustError::Dependency(format!("bad source version {name}: {err}"))
+        })?;
+        let retained = target_deps
+            .get(name)
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| {
+                VerifiedRustError::Dependency(format!("target direct requirement missing: {name}"))
+            })?;
+        let target_req = semver::VersionReq::parse(retained).map_err(|err| {
+            VerifiedRustError::Dependency(format!("bad target version {name}: {err}"))
+        })?;
+        let candidates = packages
+            .iter()
+            .filter(|pkg| pkg.get("name").and_then(toml::Value::as_str) == Some(name))
+            .collect::<Vec<_>>();
+        if candidates.len() != 1 {
+            return Err(VerifiedRustError::Dependency(format!(
+                "direct dependency {name} has {} lockfile candidates; refusing ambiguous resolution",
+                candidates.len()
+            )));
+        }
+        let chosen = candidates[0]
+            .get("version")
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| {
+                VerifiedRustError::Dependency(format!("{name} has no locked version"))
+            })?;
+        let version = semver::Version::parse(chosen).map_err(|err| {
+            VerifiedRustError::Dependency(format!("invalid locked version for {name}: {err}"))
+        })?;
+        if !parsed.matches(&version) || !target_req.matches(&version) {
+            return Err(VerifiedRustError::Dependency(format!(
+                "{name} resolved to {chosen}; incompatible with source '{requirement}' or target '{retained}'"
+            )));
+        }
+        if retained != requirement {
+            reconciled.push(format!(
+                "{name}: source='{requirement}', target='{retained}', resolved='{chosen}'"
+            ));
+        }
+    }
+    Ok(reconciled)
 }
 
 fn mount_arg(path: &Path, target: &str, readonly: bool) -> Result<String, VerifiedRustError> {
@@ -433,13 +566,68 @@ fn mount_arg(path: &Path, target: &str, readonly: bool) -> Result<String, Verifi
     ))
 }
 
+/// Use the host owner's non-root identity on Unix so the container can read
+/// temporary project directories without making copied source world-readable.
+/// Docker Desktop on Windows continues to use an unprivileged fixed UID.
+#[cfg(unix)]
+fn nonroot_container_user() -> Result<String, VerifiedRustError> {
+    let mut ids = Vec::new();
+    for flag in ["-u", "-g"] {
+        let output = Command::new("id").arg(flag).output().map_err(|err| {
+            VerifiedRustError::Docker(format!("could not get Unix identity: {err}"))
+        })?;
+        if !output.status.success() {
+            return Err(VerifiedRustError::Docker(
+                "could not read Unix identity".into(),
+            ));
+        }
+        let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) || value == "0" {
+            return Err(VerifiedRustError::Unsafe(
+                "Unix Docker verification requires a non-root host UID/GID".into(),
+            ));
+        }
+        ids.push(value);
+    }
+    Ok(format!("{}:{}", ids[0], ids[1]))
+}
+
+#[cfg(not(unix))]
+fn nonroot_container_user() -> Result<String, VerifiedRustError> {
+    Ok("65534:65534".into())
+}
+
+fn inspect_local_image_id() -> Result<String, VerifiedRustError> {
+    let output = Command::new("docker")
+        .args(["image", "inspect", "--format", "{{.Id}}", DEFAULT_IMAGE])
+        .output()
+        .map_err(|err| VerifiedRustError::Docker(format!("Docker CLI unavailable: {err}")))?;
+    if !output.status.success() {
+        return Err(VerifiedRustError::Docker(format!(
+            "{DEFAULT_IMAGE} must already be installed locally; no image pull is permitted during verification"
+        )));
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if value.len() != 71
+        || !value.starts_with("sha256:")
+        || !value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(VerifiedRustError::Docker(
+            "local Docker image returned an invalid content ID".into(),
+        ));
+    }
+    Ok(value)
+}
+
 fn docker_build(
     staged: &Path,
     results: &Path,
     registry: Option<&Path>,
+    image_id: &str,
+    container_user: &str,
 ) -> Result<String, VerifiedRustError> {
     // No shell expansion from user input: a fixed script with process arguments.
-    const SCRIPT: &str = "set -eu; cp -R /input/. /work/; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
+    const SCRIPT: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
     let name = format!("composer-verify-{}", Uuid::new_v4().simple());
     let mut cmd = Command::new("docker");
     cmd.args([
@@ -449,13 +637,16 @@ fn docker_build(
         "--name",
         &name,
         "--network=none",
+        "--ipc=none",
+        "--ulimit=nofile=1024:1024",
         "--read-only",
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
         "--pids-limit=64",
         "--memory=1024m",
         "--cpus=1",
-        "--user=65534:65534",
+        "--user",
+        container_user,
         "--workdir=/work",
         "--tmpfs=/tmp:rw,nosuid,nodev,mode=1777,size=256m",
         "--tmpfs=/work:rw,nosuid,nodev,exec,mode=1777,size=1024m",
@@ -491,7 +682,7 @@ fn docker_build(
         cmd.arg("--mount")
             .arg(mount_arg(&path, "/tmp/cargo/registry", true)?);
     }
-    cmd.args(["--entrypoint", "sh", DEFAULT_IMAGE, "-c", SCRIPT]);
+    cmd.args(["--entrypoint", "sh", image_id, "-c", SCRIPT]);
     let launched = cmd
         .output()
         .map_err(|err| VerifiedRustError::Docker(format!("Docker CLI unavailable: {err}")))?;
@@ -620,10 +811,53 @@ mod tests {
             "[package]\nname='b'\nversion='0.1.0'\n[dependencies]\nserde='2'\n",
         )
         .unwrap();
+        // A differing target constraint is never overwritten. Cargo may
+        // resolve it, but publication requires the locked version to satisfy
+        // BOTH the source and target requirements.
+        assert!(
+            merge_direct_cargo_dependencies(&manifest, &capsule, &target)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            fs::read_to_string(target.join("Cargo.toml"))
+                .unwrap()
+                .contains("serde = \"2\"")
+        );
+        let lock = target.join("Cargo.lock");
+        fs::write(
+            &lock,
+            "version = 4\n[[package]]\nname = 'serde'\nversion = '2.0.0'\n",
+        )
+        .unwrap();
         assert!(matches!(
-            merge_direct_cargo_dependencies(&manifest, &capsule, &target),
+            verify_locked_source_constraints(
+                &manifest,
+                &capsule,
+                &target.join("Cargo.toml"),
+                &lock
+            ),
             Err(VerifiedRustError::Dependency(_))
         ));
+        fs::write(
+            target.join("Cargo.toml"),
+            "[package]\nname='b'\nversion='0.1.0'\n[dependencies]\nserde='^1.0.1'\n",
+        )
+        .unwrap();
+        fs::write(
+            &lock,
+            "version = 4\n[[package]]\nname = 'serde'\nversion = '1.0.228'\n",
+        )
+        .unwrap();
+        let overlaps = verify_locked_source_constraints(
+            &manifest,
+            &capsule,
+            &target.join("Cargo.toml"),
+            &lock,
+        )
+        .unwrap();
+        assert_eq!(overlaps.len(), 1);
+        assert!(overlaps[0].contains("1.0.228"));
         fs::remove_dir_all(root).unwrap();
     }
 

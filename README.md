@@ -98,9 +98,17 @@ docker pull rust:1.99-slim # one-time setup; image is never pulled during a veri
 cargo run -p composer-cli -- verify-rust .composer/capsules/authentication path/to/target --output path/to/new-verified-target --license-reviewed --registry-cache "$HOME/.cargo/registry"
 ```
 
-The registry-cache argument is optional for targets with no external dependencies and must point to a Cargo registry directory. The cache is mounted **read-only**. Only simple, version-only direct Cargo dependencies are adopted, and differing existing constraints are rejected. Cargo performs offline transitive resolution, writes a resolved `Cargo.lock`, then compiles and runs target tests. The original target is unchanged; Composer publishes the new output only after success, alongside `composer-build-evidence.json`. Failures leave no published output.
+The registry-cache argument is optional when no external crates are needed and must point to a Cargo registry directory. The cache is mounted **read-only**. Only version-string direct Cargo dependencies are adopted. Different source/target version constraints are preserved and accepted **only** when the offline resolved lockfile chooses a version satisfying both (otherwise verification fails without publishing an output). Composer checks the lockfile and can regenerate a missing/stale lockfile once on the specific Cargo lockfile error; it does not blindly retry failing application tests. The original target is unchanged; successful results include a resolved `Cargo.lock`, executable test evidence and a `composer-build-evidence.json` file.
 
-Verification uses the existing local `rust:1.99-slim` Docker image with network disabled, a read-only container root, an unprivileged user, reduced Linux capabilities, CPU/memory/process limits, and a 240-second timeout. **Docker containers are not a perfect security boundary**; use a dedicated locked-down VM or hardened runner for genuinely hostile inputs. The source still requires independent license and security review. Offline dependency resolution only works when required crates are already cached. Cargo workspaces, cross-language adapters, path/git dependencies, nontrivial dependency migrations, and arbitrary source dependency graphs remain unsupported.
+Compose **two to five independently reviewed Rust capsules** from different repositories into one target, with isolation and tests after *each* change:
+
+```powershell
+cargo run -p composer-cli -- verify-rust-batch --capsule path/to/capsule-a path/to/capsule-b --target path/to/target --output path/to/verified-target --license-reviewed --registry-cache "$HOME/.cargo/registry"
+```
+
+If any stage fails, Composer removes intermediate copies and never publishes the requested output. A successful run includes `composer-batch-evidence.json` containing each step's independent verification. This is a bounded multi-repository Rust workflow, **not** general cross-language or arbitrary multi-file source transplantation.
+
+Verification uses an existing local `rust:1.99-slim` image by its inspected content ID, with network disabled, an isolated IPC namespace, a read-only container root, an unprivileged UID, dropped Linux capabilities, no-new-privileges, CPU/memory/file-descriptor/process limits and a 240-second timeout. The image ID is recorded for auditability but does not certify image provenance. **Docker is not production-grade hostile-code isolation**; use an isolated microVM/hardened runner before admitting untrusted third-party code. Cargo workspaces, cross-language adapters, path/git dependencies, complex dependency migration, compiler-grade source graph discovery and general autonomous repair remain unsupported. Independent security and license review is required.
 
 Start the API:
 
@@ -180,4 +188,4 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-See [the architecture overview](docs/architecture/overview.md), [repository intelligence design](docs/architecture/repository-intelligence.md), and [the MVP plan](docs/architecture/mvp-plan.md).
+See [the architecture overview](docs/architecture/overview.md), [repository intelligence design](docs/architecture/repository-intelligence.md), [sandbox controls and production hardening gaps](docs/architecture/verification-hardening.md), and [the MVP plan](docs/architecture/mvp-plan.md).
