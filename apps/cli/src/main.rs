@@ -1,3 +1,4 @@
+mod auto_external;
 mod external_discovery;
 
 use std::{error::Error, fs, net::SocketAddr, path::PathBuf};
@@ -113,6 +114,35 @@ enum Command {
         /// Maximum number of external crate candidates to return (1-20).
         #[arg(long, default_value_t = 10)]
         limit: usize,
+    },
+    /// Automatically choose a uniquely reviewed external package and verify its integration.
+    /// Unknown or ambiguous capabilities are refused rather than reimplemented.
+    ComposeExternalRust {
+        /// Approved capability name, e.g. "jaro string similarity".
+        capability: String,
+        /// JSON catalog of independently reviewed third-party source records.
+        #[arg(long)]
+        catalog: PathBuf,
+        /// Original standalone Cargo target, never modified.
+        target: PathBuf,
+        /// New output directory created only after isolated tests pass.
+        #[arg(long)]
+        output: PathBuf,
+        /// Target-visible name for the existing upstream public function.
+        #[arg(long)]
+        target_alias: String,
+        /// Existing independent target-owned behavior tests.
+        #[arg(long)]
+        contract_test: PathBuf,
+        /// Pre-provisioned read-only Cargo registry for offline execution.
+        #[arg(long)]
+        registry_cache: PathBuf,
+        /// Exclude upstream repositories owned by this user/organization.
+        #[arg(long = "exclude-owner")]
+        excluded_owners: Vec<String>,
+        /// Assert independent source and license review; not legal clearance.
+        #[arg(long)]
+        license_reviewed: bool,
     },
     /// Stage a verified Feature Capsule into a new target-local namespace.
     Integrate {
@@ -313,6 +343,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Command::DiscoverExternalCrates { capability, limit } => {
             let report = external_discovery::discover_external_crates(&capability, limit)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::ComposeExternalRust {
+            capability,
+            catalog,
+            target,
+            output,
+            target_alias,
+            contract_test,
+            registry_cache,
+            excluded_owners,
+            license_reviewed,
+        } => {
+            let result = auto_external::compose_approved_external(
+                &auto_external::AutoExternalOptions {
+                    capability,
+                    catalog,
+                    target,
+                    output,
+                    target_alias,
+                    contract_test,
+                    registry_cache,
+                    excluded_owners,
+                    license_reviewed,
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Command::Integrate {
             capsule,
