@@ -4,7 +4,7 @@
 use std::{
     error::Error,
     fs, io,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use composer_integration::{UpstreamCrateOptions, verify_upstream_crate};
@@ -181,7 +181,7 @@ pub(crate) fn compose_approved_external(
     let registry_matches = candidates
         .iter()
         .filter(|entry| {
-            entry.get("package").and_then(Value::as_str) == Some(&selected.package)
+            entry.get("package").and_then(Value::as_str) == Some(selected.package.as_str())
         })
         .collect::<Vec<_>>();
     if registry_matches.len() != 1 {
