@@ -1034,7 +1034,12 @@ pub(crate) fn docker_build_with_git_cache(
     container_user: &str,
 ) -> Result<String, VerifiedRustError> {
     docker_build_internal(
-        staged, results, registry, Some(git_cache), image_id, container_user,
+        staged,
+        results,
+        registry,
+        Some(git_cache),
+        image_id,
+        container_user,
     )
 }
 
@@ -1109,7 +1114,8 @@ fn docker_build_internal(
                 parent.file_name().is_some_and(|name| name == ".cargo")
                     || std::env::var_os("CARGO_HOME").is_some_and(|home| parent == Path::new(&home))
             });
-        if !valid_cargo_git || !path.is_dir()
+        if !valid_cargo_git
+            || !path.is_dir()
             || fs::symlink_metadata(&path)?.file_type().is_symlink()
         {
             return Err(VerifiedRustError::Unsafe(

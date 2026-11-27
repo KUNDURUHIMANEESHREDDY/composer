@@ -4,11 +4,10 @@ use clap::{Parser, Subcommand};
 use composer_core::ProjectSpec;
 use composer_integration::{
     BatchRustOptions, ExternalDiscoveryOptions, IntegrationOptions, RustWiringOptions,
-    UpstreamCrateOptions, UpstreamGitOptions, UpstreamRecoveryCandidate,
-    UpstreamRecoveryOptions, VerifiedRustOptions, apply_integration, compose_verified_rust,
-    compose_verified_rust_batch, discover_external_rust, discover_rust_api_contracts,
-    plan_integration, recover_upstream_crate, verify_capsule, verify_upstream_crate,
-    verify_upstream_git, wire_rust_module,
+    UpstreamCrateOptions, UpstreamGitOptions, UpstreamRecoveryCandidate, UpstreamRecoveryOptions,
+    VerifiedRustOptions, apply_integration, compose_verified_rust, compose_verified_rust_batch,
+    discover_external_rust, discover_rust_api_contracts, plan_integration, recover_upstream_crate,
+    verify_capsule, verify_upstream_crate, verify_upstream_git, wire_rust_module,
 };
 use composer_intelligence::{
     CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
