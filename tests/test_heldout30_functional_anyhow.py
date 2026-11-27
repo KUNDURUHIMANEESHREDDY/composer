@@ -108,7 +108,12 @@ def prefetch_cargo(target: Path, base: Path) -> Path:
 
 def target_copy(original: Path, base: Path, label: str, lock: Path):
     working = base / ("target-" + label)
-    shutil.copytree(original, working, ignore=shutil.ignore_patterns(".git"))
+    # The Rustls public certificate fixture importer verifies its exact Git
+    # commit and tracked test-ca tree; retain only this CI-created public
+    # checkout's .git metadata for that verification. Composer's published
+    # output must still never contain a .git directory.
+    ignored = None if TARGET == "rustls/rustls" else shutil.ignore_patterns(".git")
+    shutil.copytree(original, working, ignore=ignored)
     member_root = working / TARGET_MEMBER_DIR if TARGET_MEMBER_DIR else working
     (member_root / "tests").mkdir(exist_ok=True)
     (member_root / CONTRACT).write_text(INDEPENDENT_ORACLE, encoding="utf-8")
@@ -215,6 +220,7 @@ def main():
             assert proof["lockfile_git_commit_verified"] is True
             assert proof["source_checkout_commit_verified"] is True
             assert (output / "Cargo.lock").is_file()
+            assert not (output / ".git").exists(), "private Git metadata published"
             assert UPSTREAM_SHA in (output / "Cargo.lock").read_text()
             evidence = json.loads((output / "composer-upstream-git-evidence.json").read_text())
             assert evidence["network_disabled"] and evidence["offline_tests_passed"]
