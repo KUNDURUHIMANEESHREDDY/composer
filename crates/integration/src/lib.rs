@@ -3,12 +3,12 @@
 
 mod api_discovery;
 mod api_signature;
-mod reviewed;
 mod apply;
 mod batch;
 mod compatibility;
 mod dependencies;
 mod multifile;
+mod reviewed;
 mod verified;
 mod verify;
 mod wire;

@@ -129,9 +129,7 @@ pub fn compose_verified_rust(
     let capsule = verify_capsule(&options.capsule_root)?;
     let source = options.target_root.canonicalize()?;
     if let Some((rule, test)) = &reviewed_contract {
-        crate::reviewed::validate_reviewed_api(
-            &capsule.root, &source, rule, test
-        )?;
+        crate::reviewed::validate_reviewed_api(&capsule.root, &source, rule, test)?;
     }
     let dest = &options.output_root;
     if dest.exists() {
@@ -187,7 +185,11 @@ pub fn compose_verified_rust(
             &options.api_aliases,
         )?;
         let reviewed_api_rule = if let Some((rule, _test)) = &reviewed_contract {
-            Some(crate::reviewed::apply_reviewed_api(&staged, &wired.module_name, rule)?)
+            Some(crate::reviewed::apply_reviewed_api(
+                &staged,
+                &wired.module_name,
+                rule,
+            )?)
         } else {
             None
         };

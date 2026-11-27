@@ -40,9 +40,7 @@ pub(crate) fn validate_reviewed_api(
         ));
     }
     let best = matches[0].best_suggestion.as_ref().ok_or_else(|| {
-        VerifiedRustError::Unsafe(
-            "no unique, supported recommendation for reviewed API".into(),
-        )
+        VerifiedRustError::Unsafe("no unique, supported recommendation for reviewed API".into())
     })?;
     if best.suggested_cli_rule != rule {
         return Err(VerifiedRustError::Unsafe(
@@ -72,14 +70,13 @@ fn validate_contract_test(
     let test_dir = target.join("tests");
     let dir = fs::symlink_metadata(&test_dir)?;
     if !dir.file_type().is_dir() || dir.file_type().is_symlink() {
-        return Err(VerifiedRustError::Unsafe("symlinked tests directory refused".into()));
+        return Err(VerifiedRustError::Unsafe(
+            "symlinked tests directory refused".into(),
+        ));
     }
     let path = target.join(test);
     let meta = fs::symlink_metadata(&path)?;
-    if !meta.file_type().is_file()
-        || meta.len() == 0
-        || meta.len() > MAX_CONTRACT_TEST_BYTES
-    {
+    if !meta.file_type().is_file() || meta.len() == 0 || meta.len() > MAX_CONTRACT_TEST_BYTES {
         return Err(VerifiedRustError::Unsafe(
             "contract test must be a regular, nonempty Rust file under 128 KiB".into(),
         ));
@@ -121,9 +118,9 @@ pub(crate) fn apply_reviewed_api(
     parser
         .set_language(&tree_sitter_rust::LANGUAGE.into())
         .map_err(|err| VerifiedRustError::Unsafe(format!("Rust parser setup: {err}")))?;
-    let tree = parser.parse(&original, None).ok_or_else(|| {
-        VerifiedRustError::Unsafe("target library could not be parsed".into())
-    })?;
+    let tree = parser
+        .parse(&original, None)
+        .ok_or_else(|| VerifiedRustError::Unsafe("target library could not be parsed".into()))?;
     if tree.root_node().has_error() {
         return Err(VerifiedRustError::Unsafe(
             "target library contains Rust syntax errors".into(),
@@ -147,7 +144,8 @@ pub(crate) fn apply_reviewed_api(
         let body = node.child_by_field_name("body").ok_or_else(|| {
             VerifiedRustError::Unsafe("reviewed target has no parseable body".into())
         })?;
-        let prefix = original.get(node.start_byte()..name.start_byte())
+        let prefix = original
+            .get(node.start_byte()..name.start_byte())
             .ok_or_else(|| VerifiedRustError::Unsafe("invalid function span".into()))?;
         if prefix.trim() != "pub fn" {
             return Err(VerifiedRustError::Unsafe(
@@ -160,18 +158,23 @@ pub(crate) fn apply_reviewed_api(
         let bindings = if parameters.trim().is_empty() {
             Vec::new()
         } else {
-            parameters.split(',').map(|param| {
-                let (name, ty) = param.trim().split_once(':').ok_or_else(|| {
-                    VerifiedRustError::Unsafe("target parameters must be named scalar arguments".into())
-                })?;
-                let name = name.trim().strip_prefix("mut ").unwrap_or(name.trim());
-                if !identifier(name) {
-                    return Err(VerifiedRustError::Unsafe(
-                        "target has unsupported parameter binding".into(),
-                    ));
-                }
-                Ok((name.to_string(), ty.trim().to_string()))
-            }).collect::<Result<Vec<_>, VerifiedRustError>>()?
+            parameters
+                .split(',')
+                .map(|param| {
+                    let (name, ty) = param.trim().split_once(':').ok_or_else(|| {
+                        VerifiedRustError::Unsafe(
+                            "target parameters must be named scalar arguments".into(),
+                        )
+                    })?;
+                    let name = name.trim().strip_prefix("mut ").unwrap_or(name.trim());
+                    if !identifier(name) {
+                        return Err(VerifiedRustError::Unsafe(
+                            "target has unsupported parameter binding".into(),
+                        ));
+                    }
+                    Ok((name.to_string(), ty.trim().to_string()))
+                })
+                .collect::<Result<Vec<_>, VerifiedRustError>>()?
         };
         if bindings.iter().map(|(_, ty)| ty).ne(spec.parameters.iter()) {
             return Err(VerifiedRustError::Unsafe(
@@ -188,10 +191,12 @@ pub(crate) fn apply_reviewed_api(
                 "reviewed target return type changed since discovery".into(),
             ));
         }
-        let body_text = original.get(body.start_byte()..body.end_byte()).ok_or_else(|| {
-            VerifiedRustError::Unsafe("invalid function body span".into())
-        })?;
-        let compact = body_text.chars().filter(|c| !c.is_whitespace())
+        let body_text = original
+            .get(body.start_byte()..body.end_byte())
+            .ok_or_else(|| VerifiedRustError::Unsafe("invalid function body span".into()))?;
+        let compact = body_text
+            .chars()
+            .filter(|c| !c.is_whitespace())
             .collect::<String>();
         if !matches!(
             compact.as_str(),
@@ -204,7 +209,8 @@ pub(crate) fn apply_reviewed_api(
         let args = bindings
             .iter()
             .map(|(name, _)| format!("::core::convert::Into::into({name})"))
-            .collect::<Vec<_>>().join(", ");
+            .collect::<Vec<_>>()
+            .join(", ");
         let replacement = format!(
             "{{\n    // Composer: reviewed mapping, compiler-checked; behavior validated by target tests.\n\
                  let result: {} = crate::{module_name}::{}({args}).into();\n\
@@ -238,15 +244,16 @@ mod tests {
              pub fn existing(a: u32) -> u128 { a.into() }\n";
         fs::write(&file, before).unwrap();
         assert_eq!(
-            apply_reviewed_api(&root, "composer_math", "euler_totient=wanted(u32)->u128")
-                .unwrap(),
+            apply_reviewed_api(&root, "composer_math", "euler_totient=wanted(u32)->u128").unwrap(),
             "euler_totient=wanted(u32)->u128"
         );
         let after = fs::read_to_string(&file).unwrap();
         assert!(after.contains("crate::composer_math::euler_totient"));
         assert!(after.contains("pub fn existing(a: u32) -> u128 { a.into() }"));
         let snapshot = after.clone();
-        assert!(apply_reviewed_api(&root, "composer_math", "euler_totient=wanted(u32)->u128").is_err());
+        assert!(
+            apply_reviewed_api(&root, "composer_math", "euler_totient=wanted(u32)->u128").is_err()
+        );
         assert_eq!(fs::read_to_string(&file).unwrap(), snapshot);
         fs::remove_dir_all(root).unwrap();
     }
@@ -261,7 +268,11 @@ mod tests {
         for path in ["../escape.rs", "tests/../../escape.rs", "src/lib.rs"] {
             assert!(validate_contract_test(&root, Path::new(path), "wanted").is_err());
         }
-        fs::write(&test, "#[test]\n#[ignore]\nfn test() { assert_eq!(wanted(1), 1) }\n").unwrap();
+        fs::write(
+            &test,
+            "#[test]\n#[ignore]\nfn test() { assert_eq!(wanted(1), 1) }\n",
+        )
+        .unwrap();
         assert!(validate_contract_test(&root, Path::new("tests/contract.rs"), "wanted").is_err());
         fs::remove_dir_all(root).unwrap();
     }
