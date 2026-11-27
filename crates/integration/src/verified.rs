@@ -523,17 +523,68 @@ fn preserve_source_attribution(
             "a reviewed capsule must contain 1-8 original license evidence files".into(),
         ));
     }
+    // Recheck original bytes immediately before redistribution. The capsule
+    // is verified earlier, but untrusted on-disk files can change after that
+    // verification. Never publish a license whose bytes disagree with the
+    // recorded capsule SHA256, or follow a symlink out of the capsule.
+    if licenses.len() != manifest.license_evidence_files.len() {
+        return Err(VerifiedRustError::Unsafe(
+            "capsule license evidence inventory is inconsistent".into(),
+        ));
+    }
+    let mut reviewed_licenses = Vec::new();
+    for source in &licenses {
+        if !manifest
+            .license_evidence_files
+            .iter()
+            .any(|path| source.source_path.as_ref() == Some(path))
+        {
+            return Err(VerifiedRustError::Unsafe(
+                "capsule license evidence is missing from the source inventory".into(),
+            ));
+        }
+        let relative = Path::new(&source.capsule_path);
+        if relative.as_os_str().is_empty()
+            || !relative
+                .components()
+                .all(|part| matches!(part, Component::Normal(_)))
+        {
+            return Err(VerifiedRustError::Unsafe(
+                "capsule license evidence path is unsafe".into(),
+            ));
+        }
+        let mut cursor = capsule_root.to_path_buf();
+        for component in relative.components() {
+            cursor.push(component.as_os_str());
+            let meta = fs::symlink_metadata(&cursor)?;
+            if meta.file_type().is_symlink() {
+                return Err(VerifiedRustError::Unsafe(
+                    "capsule license evidence contains a symlink".into(),
+                ));
+            }
+        }
+        let original = capsule_root.join(relative);
+        let metadata = fs::symlink_metadata(&original)?;
+        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > 512 * 1024 {
+            return Err(VerifiedRustError::Unsafe(
+                "capsule license evidence is not a bounded regular file".into(),
+            ));
+        }
+        let data = fs::read(&original)?;
+        let checksum = format!("{:x}", Sha256::digest(&data));
+        if data.len() as u64 != source.size_bytes || !checksum.eq_ignore_ascii_case(&source.sha256)
+        {
+            return Err(VerifiedRustError::Unsafe(
+                "capsule license evidence no longer matches its verified SHA256".into(),
+            ));
+        }
+        reviewed_licenses.push(data);
+    }
     let license_dir = target_root.join("third_party_licenses");
     fs::create_dir_all(&license_dir)?;
     let mut notices = Vec::new();
     for (index, source) in licenses.iter().enumerate() {
-        let original = capsule_root.join(&source.capsule_path);
-        let data = fs::read(&original)?;
-        if data.len() > 512 * 1024 {
-            return Err(VerifiedRustError::Unsafe(
-                "license evidence exceeds the 512 KiB file limit".into(),
-            ));
-        }
+        let data = &reviewed_licenses[index];
         let name = format!("{}-license-{index}.txt", manifest.capability_id);
         let destination = license_dir.join(&name);
         if destination.exists() {
@@ -1997,6 +2048,96 @@ mod tests {
                 .unwrap()
                 .contains("pub use crate::composer_example::helper::answer as ported;")
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn preserves_all_upstream_notices_and_refuses_tampered_license_evidence() {
+        let root =
+            std::env::temp_dir().join(format!("composer-license-integrity-{}", Uuid::new_v4()));
+        let capsule = root.join("capsule");
+        let target = root.join("target");
+        fs::create_dir_all(capsule.join("licenses")).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        let originals = [
+            ("LICENSE-MIT", b"Example license text".as_slice()),
+            ("NOTICE", b"Copyright upstream authors".as_slice()),
+        ];
+        let mut entries = Vec::new();
+        for (name, bytes) in originals {
+            fs::write(capsule.join("licenses").join(name), bytes).unwrap();
+            entries.push(composer_intelligence::CapsuleFile {
+                source_path: Some(PathBuf::from(name)),
+                capsule_path: format!("licenses/{name}"),
+                file_kind: "license_evidence".into(),
+                size_bytes: bytes.len() as u64,
+                sha256: format!("{:x}", Sha256::digest(bytes)),
+            });
+        }
+        let manifest = CapsuleManifest {
+            schema_version: 1,
+            capsule_id: "reviewed-example".into(),
+            capability_id: "example".into(),
+            description: "license test".into(),
+            created_at_unix: 0,
+            source_repository_url: Some("https://github.com/example/upstream.git".into()),
+            source_commit_sha: Some("abcdef0123456789abcdef0123456789abcdef01".into()),
+            source_tree_sha: None,
+            dependency_closure_strategy: "test".into(),
+            files: entries,
+            included_source_files: Vec::new(),
+            included_symbol_ids: Vec::new(),
+            external_or_unresolved_imports: Vec::new(),
+            unfollowed_symbol_references: Vec::new(),
+            license_evidence_files: vec![PathBuf::from("LICENSE-MIT"), PathBuf::from("NOTICE")],
+            license_review_required: true,
+            boundary_warnings: Vec::new(),
+        };
+        preserve_source_attribution(&manifest, &capsule, &target).unwrap();
+        let entries: Vec<serde_json::Value> = serde_json::from_slice(
+            &fs::read(target.join("composer-source-attributions.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["license_review_asserted_by_caller"], true);
+        assert_eq!(entries[0]["automated_legal_clearance"], false);
+        let notices = entries[0]["license_documents"].as_array().unwrap();
+        assert_eq!(notices.len(), 2);
+        for (index, (name, bytes)) in originals.iter().enumerate() {
+            assert_eq!(notices[index]["original_path"], *name);
+            assert_eq!(
+                notices[index]["source_sha256"],
+                format!("{:x}", Sha256::digest(bytes))
+            );
+            assert_eq!(
+                fs::read(target.join(format!("third_party_licenses/example-license-{index}.txt")))
+                    .unwrap(),
+                *bytes
+            );
+        }
+        // The previously validated capsule can be modified before publication.
+        // Recheck both notice bytes so nothing with a false recorded hash ships.
+        fs::write(capsule.join("licenses/NOTICE"), "tampered contents").unwrap();
+        let second = root.join("tampered-target");
+        fs::create_dir_all(&second).unwrap();
+        assert!(matches!(
+            preserve_source_attribution(&manifest, &capsule, &second),
+            Err(VerifiedRustError::Unsafe(_))
+        ));
+        assert!(!second.join("third_party_licenses").exists());
+        assert!(!second.join("composer-source-attributions.json").exists());
+        let mut unsafe_manifest = manifest.clone();
+        unsafe_manifest.files[0].capsule_path = "../outside".into();
+        assert!(matches!(
+            preserve_source_attribution(&unsafe_manifest, &capsule, &second),
+            Err(VerifiedRustError::Unsafe(_))
+        ));
+        let mut missing_inventory = manifest.clone();
+        missing_inventory.license_evidence_files.pop();
+        assert!(matches!(
+            preserve_source_attribution(&missing_inventory, &capsule, &second),
+            Err(VerifiedRustError::Unsafe(_))
+        ));
         fs::remove_dir_all(root).unwrap();
     }
 

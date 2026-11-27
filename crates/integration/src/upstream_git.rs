@@ -1225,6 +1225,10 @@ mod tests {
             registry_cache: PathBuf::from("missing-registry"),
             git_cache: PathBuf::from("missing-git"),
             license_reviewed: true,
+            required_signer_fingerprint: None,
+            contract_focused: false,
+            allow_binary_library_adapter: false,
+            target_member_dir: None,
         };
         assert!(matches!(
             verify_upstream_git_candidates(&options, &["levenshtein".into()]),
