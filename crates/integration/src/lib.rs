@@ -7,6 +7,7 @@ mod apply;
 mod batch;
 mod compatibility;
 mod dependencies;
+mod external_discovery;
 mod multifile;
 mod reviewed;
 mod upstream_crate;
@@ -27,6 +28,9 @@ pub use compatibility::{
     AdapterContract, CompatibilityError, CompatibilityFinding, CompatibilityLevel,
     CompatibilityPlan, IntegrationStrategy, SymbolCollision, TargetProfile, TestEvidence,
     plan_integration,
+};
+pub use external_discovery::{
+    ExternalDiscoveryOptions, ExternalDiscoveryResult, discover_external_rust,
 };
 pub use dependencies::{
     DependencyEcosystem, DependencyInventory, DependencyKind, DependencyRequirement,
