@@ -28,6 +28,9 @@ pub struct UpstreamCrateOptions {
     pub version: String,
     pub public_symbol: String,
     pub target_alias: String,
+    /// Optional isolated Cargo dependency key (e.g. composer_strsim).
+    /// Allows two incompatible package versions to coexist if Cargo accepts them.
+    pub dependency_alias: Option<String>,
     pub contract_test: PathBuf,
     pub registry_cache: PathBuf,
     /// Human-reviewed provenance assertion, NOT automatic source/release matching.
@@ -61,6 +64,13 @@ fn rust_identifier(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+fn public_symbol_path(value: &str) -> bool {
+    let segments = value.split("::").collect::<Vec<_>>();
+    !segments.is_empty()
+        && segments.len() <= 4
+        && segments.iter().all(|segment| rust_identifier(segment))
 }
 
 fn package_identifier(value: &str) -> bool {
@@ -161,7 +171,7 @@ pub fn verify_upstream_crate(
         return Err(VerifiedRustError::ReviewRequired);
     }
     if !package_identifier(&options.package)
-        || !rust_identifier(&options.public_symbol)
+        || !public_symbol_path(&options.public_symbol)
         || !rust_identifier(&options.target_alias)
         || !validated_upstream_repository(&options.upstream_repository)
         || options.upstream_commit.len() != 40
@@ -180,6 +190,20 @@ pub fn verify_upstream_crate(
     if exact.to_string() != options.version {
         return Err(VerifiedRustError::Unsafe(
             "crate version must be canonical and exact".into(),
+        ));
+    }
+
+    let dependency_key = options
+        .dependency_alias
+        .as_deref()
+        .unwrap_or(&options.package);
+    if options.dependency_alias.is_some()
+        && (!dependency_key.starts_with("composer_")
+            || !package_identifier(dependency_key)
+            || dependency_key == options.package)
+    {
+        return Err(VerifiedRustError::Unsafe(
+            "isolated dependency aliases must be distinct, safe composer_ identifiers".into(),
         ));
     }
 
@@ -205,7 +229,7 @@ pub fn verify_upstream_crate(
     }
     let lib_source = fs::read_to_string(&lib)?;
     if lib_source.contains(&format!("pub fn {}", options.target_alias))
-        || lib_source.contains(&format!("pub use {}", options.package.replace('-', "_")))
+        || lib_source.contains(&format!("pub use {}", dependency_key.replace('-', "_")))
     {
         return Err(VerifiedRustError::Unsafe(
             "target alias or upstream export may collide".into(),
@@ -216,11 +240,11 @@ pub fn verify_upstream_crate(
         if cargo
             .get(group)
             .and_then(toml::Value::as_table)
-            .is_some_and(|table| table.contains_key(&options.package))
+            .is_some_and(|table| table.contains_key(dependency_key))
         {
             return Err(VerifiedRustError::Dependency(format!(
                 "target already declares {}; resolve the dependency explicitly first",
-                options.package
+                dependency_key
             )));
         }
     }
@@ -237,10 +261,21 @@ pub fn verify_upstream_crate(
         .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
         .as_table_mut()
         .ok_or_else(|| VerifiedRustError::Dependency("target [dependencies] is invalid".into()))?;
-    dependencies.insert(
-        options.package.clone(),
-        toml::Value::String(format!("={}", options.version)),
-    );
+    let dependency_value = if options.dependency_alias.is_some() {
+        let mut renamed = toml::map::Map::new();
+        renamed.insert(
+            "package".into(),
+            toml::Value::String(options.package.clone()),
+        );
+        renamed.insert(
+            "version".into(),
+            toml::Value::String(format!("={}", options.version)),
+        );
+        toml::Value::Table(renamed)
+    } else {
+        toml::Value::String(format!("={}", options.version))
+    };
+    dependencies.insert(dependency_key.to_owned(), dependency_value);
 
     let dest = &options.output_root;
     if dest.exists() {
@@ -285,7 +320,7 @@ pub fn verify_upstream_crate(
         updated_lib.push_str(&format!(
             "\n// Composer: reviewed published crate reuse (no source regeneration)\n\
              pub use {}::{} as {};\n",
-            options.package.replace('-', "_"),
+            dependency_key.replace('-', "_"),
             options.public_symbol,
             options.target_alias
         ));
@@ -313,6 +348,7 @@ pub fn verify_upstream_crate(
             "registry_checksum": locked_checksum,
             "public_symbol": options.public_symbol,
             "target_alias": options.target_alias,
+            "dependency_alias": options.dependency_alias,
             "contract_test": options.contract_test,
             "upstream_repository_claimed": options.upstream_repository,
             "upstream_commit_claimed": options.upstream_commit,
@@ -379,6 +415,9 @@ mod tests {
         assert!(package_identifier("strsim"));
         assert!(rust_identifier("jaro"));
         assert!(rust_identifier("ported_jaro"));
+        assert!(public_symbol_path("str::jaro"));
+        assert!(!public_symbol_path("str::danger!"));
+        assert!(!public_symbol_path("::jaro"));
     }
 
     #[test]
@@ -390,6 +429,7 @@ mod tests {
             version: "0.11.1".into(),
             public_symbol: "jaro".into(),
             target_alias: "ported_jaro".into(),
+            dependency_alias: None,
             contract_test: PathBuf::from("tests/contract.rs"),
             registry_cache: PathBuf::from("cache"),
             upstream_repository: "https://github.com/rapidfuzz/strsim-rs".into(),
