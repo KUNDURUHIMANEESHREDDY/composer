@@ -12,7 +12,6 @@ Name "Composer CLI"
 OutFile "${COMPOSER_OUTPUT}"
 InstallDir "$LOCALAPPDATA\Programs\Composer"
 RequestExecutionLevel user
-SetShellVarContext current
 SetCompressor /SOLID lzma
 ShowInstDetails show
 ShowUninstDetails show
@@ -21,6 +20,7 @@ ShowUninstDetails show
 !define APP_VERSION "0.1.0"
 
 Section "Composer CLI" SEC_MAIN
+  SetShellVarContext current
   SetOutPath "$INSTDIR"
   File "/oname=composer.exe" "${COMPOSER_SOURCE}"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -38,6 +38,7 @@ Section "Composer CLI" SEC_MAIN
 SectionEnd
 
 Section "Uninstall"
+  SetShellVarContext current
   ; No recursive deletion of arbitrary user files.
   Delete "$INSTDIR\composer.exe"
   Delete "$INSTDIR\Uninstall.exe"
