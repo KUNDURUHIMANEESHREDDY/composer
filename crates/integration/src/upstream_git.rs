@@ -18,8 +18,8 @@ use crate::{
     VerifiedRustError,
     reviewed::validate_contract_test,
     verified::{
-        copy_bounded_target, docker_build_with_git_cache, inspect_local_image_id,
-        nonroot_container_user,
+        copy_bounded_target_with_workspace_dirs, docker_build_with_git_cache,
+        inspect_local_image_id, nonroot_container_user,
     },
 };
 
@@ -85,6 +85,62 @@ pub struct UpstreamGitResult {
     pub verification_scope: String,
     pub evidence_path: PathBuf,
     pub elapsed_seconds: f64,
+}
+
+/// Exact workspace member directories are copied through the existing
+/// bounded, symlink-safe snapshot. Cargo glob patterns and traversal refuse
+/// integration rather than silently omitting members.
+fn workspace_member_roots(cargo: &toml::Value) -> Result<Vec<String>, VerifiedRustError> {
+    let Some(workspace) = cargo.get("workspace") else {
+        return Ok(Vec::new());
+    };
+    let members = workspace.get("members").and_then(toml::Value::as_array);
+    let mut roots = std::collections::BTreeSet::new();
+    if let Some(members) = members {
+        if members.len() > 32 {
+            return Err(VerifiedRustError::Dependency(
+                "too many Cargo workspace members".into(),
+            ));
+        }
+        for member in members {
+            let path = member.as_str().ok_or_else(|| {
+                VerifiedRustError::Unsafe("workspace member must be a plain directory path".into())
+            })?;
+            if path == "." {
+                continue;
+            }
+            let parts = path.split('/').collect::<Vec<_>>();
+            if parts.is_empty()
+                || parts.iter().any(|part| {
+                    part.is_empty()
+                        || part.starts_with('.')
+                        || part
+                            .bytes()
+                            .any(|c| !c.is_ascii_alphanumeric() && c != b'-' && c != b'_')
+                })
+            {
+                return Err(VerifiedRustError::Unsafe(
+                    "workspace member traversal, glob, or nonstandard path refused".into(),
+                ));
+            }
+            roots.insert(parts[0].to_owned());
+        }
+    }
+    Ok(roots.into_iter().collect())
+}
+
+#[test]
+fn workspace_member_paths_are_bounded_and_nontraversing() {
+    let valid: toml::Value = toml::from_str("[package]\nname='x'\nversion='0.1.0'\n[workspace]\nmembers=['.', 'crates/one', 'tests/other']").unwrap();
+    assert_eq!(
+        workspace_member_roots(&valid).unwrap(),
+        vec!["crates".to_owned(), "tests".to_owned()]
+    );
+    for bad in ["../escape", "crates/*", "/absolute", "crates/../escape"] {
+        let config: toml::Value =
+            toml::from_str(&format!("[workspace]\nmembers=['{bad}']")).unwrap();
+        assert!(workspace_member_roots(&config).is_err(), "{bad}");
+    }
 }
 
 fn ascii_ident(input: &str) -> bool {
@@ -465,14 +521,15 @@ pub fn verify_upstream_git(
     let mut cargo: toml::Value = toml::from_str(&fs::read_to_string(&target_manifest)?)
         .map_err(|err| VerifiedRustError::Toml(err.to_string()))?;
     if cargo.get("package").is_none()
-        || cargo.get("workspace").is_some()
         || cargo.get("patch").is_some()
         || cargo.get("replace").is_some()
     {
         return Err(VerifiedRustError::Dependency(
-            "Git capability import supports only standalone, unpatched Cargo targets".into(),
+            "Git capability import requires a root library package without patch/replace overrides"
+                .into(),
         ));
     }
+    let workspace_dirs = workspace_member_roots(&cargo)?;
     let lib = original.join("src/lib.rs");
     let meta = fs::symlink_metadata(&lib)?;
     if !meta.is_file() || meta.file_type().is_symlink() {
@@ -537,7 +594,7 @@ pub fn verify_upstream_git(
         return Err(err.into());
     }
     let result = (|| {
-        copy_bounded_target(&original, &staged)?;
+        copy_bounded_target_with_workspace_dirs(&original, &staged, &workspace_dirs)?;
         fs::write(
             staged.join("Cargo.toml"),
             toml::to_string_pretty(&cargo)
@@ -602,6 +659,7 @@ pub fn verify_upstream_git(
             "docker_memory_limit_mb": crate::verified::selected_verifier_memory_mb()?,
             "docker_cpu_limit": crate::verified::selected_verifier_cpus()?,
             "docker_all_features": crate::verified::selected_verifier_features()?,
+            "cargo_workspace_root_package": cargo.get("workspace").is_some(),
             "verification_scope": if options.contract_focused { "library_and_integration_tests" } else { "all_targets" },
             "third_party_benchmarks_verified": !options.contract_focused,
             "docker_image_id": image_id,

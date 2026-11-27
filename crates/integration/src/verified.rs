@@ -399,6 +399,16 @@ fn valid_public_alias_identifier(value: &str) -> bool {
 }
 
 pub(crate) fn copy_bounded_target(source: &Path, output: &Path) -> Result<(), VerifiedRustError> {
+    copy_bounded_target_with_workspace_dirs(source, output, &[])
+}
+
+/// Reuse Composer's bounded, symlink-rejecting copier for explicitly listed
+/// Cargo workspace member directories. This does not traverse arbitrary paths.
+pub(crate) fn copy_bounded_target_with_workspace_dirs(
+    source: &Path,
+    output: &Path,
+    workspace_dirs: &[String],
+) -> Result<(), VerifiedRustError> {
     let mut total_files = 0usize;
     let mut total_bytes = 0u64;
     for name in [
@@ -431,18 +441,32 @@ pub(crate) fn copy_bounded_target(source: &Path, output: &Path) -> Result<(), Ve
             "target Cargo.toml is missing".into(),
         ));
     }
-    for dir in [
-        "src",
-        "tests",
-        "examples",
-        "benches",
-        "third_party_licenses",
-    ] {
-        let source_dir = source.join(dir);
+    let mut directories = std::collections::BTreeSet::from([
+        "src".to_owned(),
+        "tests".to_owned(),
+        "examples".to_owned(),
+        "benches".to_owned(),
+        "third_party_licenses".to_owned(),
+    ]);
+    for name in workspace_dirs {
+        if name.is_empty()
+            || name.starts_with('.')
+            || name
+                .bytes()
+                .any(|c| !c.is_ascii_alphanumeric() && c != b'-' && c != b'_')
+        {
+            return Err(VerifiedRustError::Unsafe(
+                "unsafe Cargo workspace member root directory".into(),
+            ));
+        }
+        directories.insert(name.to_owned());
+    }
+    for dir in directories {
+        let source_dir = source.join(&dir);
         if source_dir.exists() {
             copy_tree(
                 &source_dir,
-                &output.join(dir),
+                &output.join(&dir),
                 &mut total_files,
                 &mut total_bytes,
             )?;

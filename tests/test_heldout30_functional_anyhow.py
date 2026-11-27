@@ -21,6 +21,7 @@ TARGET = "dtolnay/anyhow"
 # Explicit opt-in only: full all-targets is always the default.
 CONTRACT_FOCUSED = False
 PROVE_FULL_TARGET_FAILURE = False
+EXPECT_WORKSPACE = False
 CONTRACT = "tests/composer_heldout30_totient_contract.rs"
 INDEPENDENT_ORACLE = """use anyhow::ported_totient;
 #[test]
@@ -38,7 +39,7 @@ def prefetch_cargo(target: Path, base: Path) -> Path:
     shutil.copytree(target, prefetch, ignore=shutil.ignore_patterns(".git"))
     manifest = prefetch / "Cargo.toml"
     text = manifest.read_text(encoding="utf-8")
-    assert "[package]" in text and "[workspace]" not in text
+    assert "[package]" in text
     assert "composer_git_the_algorithms_rust" not in text
     dependency = (
         f'composer_git_the_algorithms_rust = {{ package = "{PACKAGE}", '
@@ -149,6 +150,7 @@ def main():
             assert evidence["docker_image_reference"] == image
             assert evidence["docker_cpu_limit"] == int(os.getenv("COMPOSER_VERIFIER_CPUS", "1"))
             assert evidence["docker_all_features"] is (os.getenv("COMPOSER_VERIFIER_FEATURES", "default") == "all")
+            assert evidence["cargo_workspace_root_package"] is EXPECT_WORKSPACE
             assert evidence["verification_scope"] == expected_scope
             assert evidence["docker_memory_limit_mb"] == int(os.getenv("COMPOSER_VERIFIER_MEMORY_MB", "1024"))
             assert evidence["third_party_benchmarks_verified"] is (not CONTRACT_FOCUSED)
