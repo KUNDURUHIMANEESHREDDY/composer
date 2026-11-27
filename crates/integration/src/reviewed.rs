@@ -67,6 +67,20 @@ fn validate_contract_test(
             "reviewed contract test must be tests/<filename>.rs (no traversal)".into(),
         ));
     }
+    // Cargo can disable automatic integration-test discovery. Do not
+    // accept a test file that the verification command may never execute.
+    let cargo: toml::Value = toml::from_str(&fs::read_to_string(target.join("Cargo.toml"))?)
+        .map_err(|err| VerifiedRustError::Toml(err.to_string()))?;
+    if cargo
+        .get("package")
+        .and_then(|package| package.get("autotests"))
+        .and_then(toml::Value::as_bool)
+        == Some(false)
+    {
+        return Err(VerifiedRustError::Unsafe(
+            "target disables automatic integration tests; contract test not guaranteed to execute".into(),
+        ));
+    }
     let test_dir = target.join("tests");
     let dir = fs::symlink_metadata(&test_dir)?;
     if !dir.file_type().is_dir() || dir.file_type().is_symlink() {
@@ -262,6 +276,7 @@ mod tests {
     fn refuses_invalid_contract_file_paths_and_ignored_tests() {
         let root = std::env::temp_dir().join(format!("composer-contract-{}", Uuid::new_v4()));
         fs::create_dir_all(root.join("tests")).unwrap();
+        fs::write(root.join("Cargo.toml"), "[package]\nname='demo'\nversion='0.1.0'\n").unwrap();
         let test = root.join("tests/contract.rs");
         fs::write(&test, "#[test] fn test() { assert_eq!(wanted(1), 1) }\n").unwrap();
         assert!(validate_contract_test(&root, Path::new("tests/contract.rs"), "wanted").is_ok());
