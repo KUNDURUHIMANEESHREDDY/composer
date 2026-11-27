@@ -1,7 +1,7 @@
 //! Bounded automatic package selection from human-reviewed external sources.
 //! Only the orchestration/adapter is new: Cargo and the published upstream
 //! crate supply the implementation. There is no arbitrary code generation.
-use std::{error::Error, fs, io, path::PathBuf};
+use std::{error::Error, fs, io, path::PathBuf, process::Command};
 
 use composer_integration::{UpstreamCrateOptions, verify_upstream_crate};
 use serde_json::{Value, json};
@@ -155,6 +155,22 @@ fn approved_source(
     Ok(selected.remove(0))
 }
 
+/// Cargo's registry metadata is external data: check both the *exact*
+/// package and version, not a fuzzy search result or description.
+fn cargo_info_matches(info: &str, package: &str, version: &str) -> bool {
+    let header = info.lines().find(|line| !line.trim().is_empty());
+    let named = header
+        .and_then(|line| line.split_whitespace().next())
+        == Some(package);
+    let versioned = info.lines().any(|line| {
+        line.trim()
+            .strip_prefix("version:")
+            .and_then(|value| value.split_whitespace().next())
+            == Some(version)
+    });
+    named && versioned
+}
+
 /// Select a pinned, reviewed third-party package, confirm registry presence,
 /// and use the existing fail-closed Docker verifier. This is NOT general AI
 /// selection: no source enters execution from search results alone.
@@ -193,15 +209,34 @@ pub(crate) fn compose_approved_external(
             entry.get("package").and_then(Value::as_str) == Some(selected.package.as_str())
         })
         .collect::<Vec<_>>();
-    if registry_matches.len() != 1 {
-        return Err(invalid(
-            "approved package is absent or ambiguous in crates.io search",
-        ));
+    if registry_matches.len() > 1 {
+        return Err(invalid("ambiguous crate identity in crates.io search"));
     }
-    let latest_seen = registry_matches[0]
-        .get("published_version_unverified")
+
+    // Cargo search is an advisory keyword index: its free-text output is
+    // not guaranteed to list every published crate. Reuse Cargo's exact
+    // package/version metadata rather than trusting a parser's absence.
+    // Cargo info may download the pinned .crate archive but never executes it.
+    let info = Command::new("cargo")
+        .arg("info")
+        .arg(format!("{}@{}", selected.package, selected.version))
+        .arg("--registry")
+        .arg("crates-io")
+        .env("CARGO_NET_RETRY", "0")
+        .env("CARGO_HTTP_TIMEOUT", "15")
+        .output()?;
+    if !info.status.success() || info.stdout.len() > 16 * 1024 {
+        return Err(invalid("Cargo could not verify the approved exact package version"));
+    }
+    let info_output = String::from_utf8(info.stdout)?;
+    if !cargo_info_matches(&info_output, &selected.package, &selected.version) {
+        return Err(invalid("Cargo registry package identity or pinned version mismatch"));
+    }
+    let latest_seen = registry_matches
+        .first()
+        .and_then(|candidate| candidate.get("published_version_unverified"))
         .and_then(Value::as_str)
-        .ok_or_else(|| invalid("registry candidate has no valid version"))?;
+        .unwrap_or("not_listed_by_keyword_search");
 
     // Exact package version, independently supplied behavioral contract and
     // immutable provenance claim pass into the existing verifier unchanged.
@@ -288,6 +323,15 @@ mod tests {
             json!("https://github.com/rapidfuzz/strsim-rs/tree/main");
         assert!(approved_source(&data, "jaro", &[]).is_err());
         assert!(approved_source(&catalog(), "jaro; run code", &[]).is_err());
+    }
+
+    #[test]
+    fn exact_cargo_metadata_does_not_accept_name_or_version_confusion() {
+        let info = "strsim #jaro #similarity\nString similarity metrics\nversion: 0.11.1\nlicense: MIT\n";
+        assert!(cargo_info_matches(info, "strsim", "0.11.1"));
+        assert!(!cargo_info_matches(info, "strsim", "0.10.0"));
+        assert!(!cargo_info_matches(info, "strsim-copy", "0.11.1"));
+        assert!(!cargo_info_matches("strsim\nversion: 0.10.0\n", "strsim", "0.11.1"));
     }
 
     #[test]
