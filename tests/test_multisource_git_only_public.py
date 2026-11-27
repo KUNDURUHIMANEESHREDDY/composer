@@ -19,10 +19,10 @@ from test_pinned_public_multifile import clone_exact, run
 UPSTREAM = "https://github.com/weihanglo/rust-algorithm-club.git"
 UPSTREAM_SHA = "1954301f21d44c18ea44864a776a3f6fd72eaefe"
 PACKAGE = "rust-algorithm-club"
-TARGET = "https://github.com/rapidfuzz/strsim-rs.git"
-TARGET_SHA = "dacc84c0dc61eff0ee0ff66962bcf2e17018ad26"
+TARGET = "https://github.com/alexfertel/rust-algorithms.git"
+TARGET_SHA = "06c906d13f5b197d14b4507c87b38eacde7c670a"
 CONTRACT = "tests/composer_levenshtein_external_contract.rs"
-TESTS = """use strsim::ported_levenshtein;
+TESTS = """use rust_algorithms::ported_levenshtein;
 #[test]
 fn independent_edit_distance_oracle() {
     assert_eq!(ported_levenshtein("", ""), 0);
@@ -115,7 +115,7 @@ def test_independent_second_source() -> dict:
     with tempfile.TemporaryDirectory(prefix="composer-holdout-git-only-") as tmp:
         base = Path(tmp)
         checkout = base / "weihanglo-rust-algorithm-club"
-        source_target = base / "rapidfuzz-strsim"
+        source_target = base / "alexfertel-rust-algorithms"
         clone_exact(UPSTREAM, UPSTREAM_SHA, checkout)
         clone_exact(TARGET, TARGET_SHA, source_target)
         assert (checkout / "LICENSE").is_file()
