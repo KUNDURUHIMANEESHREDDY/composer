@@ -244,6 +244,7 @@ name = "composer-integration"
 version = "0.1.0"
 dependencies = [
  "composer-intelligence",
+ "composer-repository",
  "semver",
  "serde",
  "serde_json",
