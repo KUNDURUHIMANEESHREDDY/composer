@@ -211,6 +211,36 @@ pub fn discover_rust_api_contracts(
     })
 }
 
+/// Infer only an exact, top-level, public borrowed-string Rust function using
+/// the existing Tree-sitter parser. This does NOT infer semantic equivalence;
+/// the caller explicitly requests a target-facing owned-String API and must
+/// still provide an independent behavior contract before publishing.
+/// Methods, modules, generics, async, unsafe, attrs that alter function shape,
+/// and unsupported argument or return types fail closed.
+pub(crate) fn infer_owned_string_target_signature(
+    pinned_source: &str,
+    upstream_symbol: &str,
+    target_alias: &str,
+) -> Option<String> {
+    if !identifier(upstream_symbol) || !identifier(target_alias) {
+        return None;
+    }
+    let mut matches = scan_public_functions(pinned_source, Path::new("src/lib.rs"), "")
+        .into_iter()
+        .filter(|candidate| {
+            candidate.name == upstream_symbol
+                && candidate.result == "String"
+                && !candidate.parameters.is_empty()
+                && candidate.parameters.iter().all(|ty| ty == "&str")
+        });
+    let candidate = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    let inputs = vec!["String"; candidate.parameters.len()].join(",");
+    Some(format!("{target_alias}({inputs})->String"))
+}
+
 fn rust_tree(source: &str) -> Option<Tree> {
     let mut parser = Parser::new();
     parser
@@ -447,6 +477,36 @@ mod tests {
             source_path: name.into(),
             body_is_unimplemented: false,
         }
+    }
+
+    #[test]
+    fn infers_only_exact_upstream_borrowed_string_signatures() {
+        let source = r#"
+#[inline(always)]
+#[cfg(feature = "alloc")]
+pub fn deunicode(s: &str) -> String { s.to_owned() }
+pub fn combine(a: &str, b: &str) -> String { format!("{a}{b}") }
+pub fn wrong(arg: u32) -> String { arg.to_string() }
+pub fn reference(s: &str) -> &str { s }
+pub async fn delayed(s: &str) -> String { s.to_owned() }
+struct Internal;
+impl Internal { pub fn method(s: &str) -> String { s.to_owned() } }
+"#;
+        assert_eq!(
+            infer_owned_string_target_signature(source, "deunicode", "transliterate"),
+            Some("transliterate(String)->String".into())
+        );
+        assert_eq!(
+            infer_owned_string_target_signature(source, "combine", "concat"),
+            Some("concat(String,String)->String".into())
+        );
+        for unsupported in ["wrong", "reference", "delayed", "method", "missing", "deunicode;evil"] {
+            assert!(
+                infer_owned_string_target_signature(source, unsupported, "target").is_none(),
+                "{unsupported}"
+            );
+        }
+        assert!(infer_owned_string_target_signature(source, "deunicode", "unsafe::target").is_none());
     }
 
     #[test]
