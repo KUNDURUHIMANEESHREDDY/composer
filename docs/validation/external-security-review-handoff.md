@@ -11,6 +11,8 @@ Composer reuses existing, independently maintained tools:
 
 The original algorithms remain in their upstream repositories. Composer generates only narrow typed adapters (owned `String` arguments borrowed as `&str`) and does not generate source implementations. Independently authored tests must pass before publishing a separate target copy.
 
+The additional [RustSec audit-check](https://github.com/rustsec/audit-check) action is consumed at pinned upstream commit `69366f33c96575abad1ee0dba8212993eecbe998` and checks Cargo.lock against RustSec advisories. This is a third-party **dependency vulnerability scanner**, not an independent review of the Composer source code or gVisor containment. Any security findings must be examined and remediated using safe updated upstream dependencies rather than ignored to turn CI green.
+
 ### Reviewed protections and failure cases
 
 | Threat | Existing or new check | Still unproven |
