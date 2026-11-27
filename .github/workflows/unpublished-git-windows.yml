@@ -43,19 +43,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Verify Windows Rust format
         run: cargo fmt --all -- --check
-      - name: Resolve Windows-specific Cargo lockfile changes
-        shell: pwsh
-        run: |
-          cargo generate-lockfile
-          if ($LASTEXITCODE -ne 0) { throw "Cargo could not resolve Windows dependencies" }
-          if (git diff --quiet -- Cargo.lock) {
-            Write-Output "PASS committed Cargo.lock works unchanged on Windows"
-          } else {
-            Write-Output "::warning::Committed Cargo.lock requires Windows-specific resolution; native install reproducibility from the original lock remains open"
-            git diff --stat -- Cargo.lock
-            git diff --no-ext-diff -- Cargo.lock
-          }
-      - name: Verify workspace unit tests from clean Windows runner with resolved lockfile
+      - name: Verify committed Cargo.lock resolves unchanged on clean Windows
+        run: cargo metadata --locked --format-version 1 --no-deps
+      - name: Verify workspace unit tests from clean Windows runner
         run: cargo test --workspace --all-targets --locked
       - name: Verify CLI supports both external import commands on Windows
         shell: pwsh
