@@ -220,7 +220,11 @@ enum Command {
         /// Infer bounded concrete argument/return types from a pinned public Rust function.
         /// Existing flag is retained; --infer-typed-signature is a clearer alias.
         /// Requires independent source/license review and behavioral tests.
-        #[arg(long, visible_alias = "infer-typed-signature", conflicts_with = "target_signature")]
+        #[arg(
+            long,
+            visible_alias = "infer-typed-signature",
+            conflicts_with = "target_signature"
+        )]
         infer_owned_string_signature: bool,
         /// Existing tests/<name>.rs independently authored contract.
         #[arg(long)]
