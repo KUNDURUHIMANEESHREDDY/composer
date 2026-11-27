@@ -148,6 +148,31 @@ def main():
             outputs.append({"n": n, "verified": True})
             print(f"PASS pinned Git source/type adapter {n}/3", flush=True)
 
+        # A third-party checkout can set core.fsmonitor in .git/config.
+        # `git status` must not invoke that host-side helper while Composer
+        # verifies the pinned source. Use a real public Git checkout, not mocks.
+        monitor = root / "untrusted-git-fsmonitor.sh"
+        marker = root / "host-fsmonitor-executed"
+        monitor.write_text(
+            "#!/bin/sh\n" + f"printf failed > '{marker}'\n" + "echo /\n",
+            encoding="utf-8",
+        )
+        monitor.chmod(0o700)
+        run("git", "-C", str(source), "config", "--local", "core.fsmonitor", str(monitor))
+        guarded, original = copy_target(target, root, "git-fsmonitor-host-guard")
+        guarded_output = root / "published-fsmonitor-guard"
+        try:
+            guarded_result = json.loads(
+                verify(guarded, guarded_output, source, signature=None, infer=True).stdout
+            )
+            assert guarded_result["offline_tests_passed"] is True
+            assert guarded_result["source_checkout_commit_verified"] is True
+            assert not marker.exists(), "Git metadata executed checkout-provided host helper"
+            unchanged(guarded, original)
+        finally:
+            run("git", "-C", str(source), "config", "--local", "--unset", "core.fsmonitor")
+        print("PASS third-party checkout fsmonitor not executed by host verification", flush=True)
+
         wrong, baseline = copy_target(target, root, "wrong-result", WRONG)
         dest = root / "must-not-publish-wrong"
         failed = verify(wrong, dest, source, require_success=False)
