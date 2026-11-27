@@ -110,7 +110,36 @@ def main() -> None:
         assert negative["best_suggestion"] is None, negative
         print("PASS third public source: unsupported/no matching scalar API "
               "does not invent an adapter", flush=True)
-        print("PASS 3 distinct pinned public sources, 2 existing project targets; "
+        # Two previously unbenchmarked Rust projects serve as negative
+        # controls: exposed APIs return Result/opaque types, not fixed-width
+        # scalar signatures. Discovery must not fabricate matches.
+        unfamiliar = [
+            (
+                "glob",
+                "https://github.com/rust-lang/glob.git",
+                "057cef2824f5a96f738e52d7d8ca3e024381bcc6",
+                "glob", "auto-glob",
+            ),
+            (
+                "demangle",
+                "https://github.com/rust-lang/rustc-demangle.git",
+                "4023665a9bafb7cd9808033fd76fa50f83b9542c",
+                "demangle", "auto-demangle",
+            ),
+        ]
+        for name, url, sha, seed, capability in unfamiliar:
+            checkout = root / f"unfamiliar-{name}"
+            clone_exact(url, sha, checkout)
+            assert (checkout / "LICENSE-MIT").is_file()
+            feature = make_capsule(
+                checkout, root, seed, "src/lib.rs", capability,
+                {"src/lib.rs"}, expected_sha=sha, license_file="LICENSE-MIT",
+            )
+            found = recommend(feature, target_b, "adapted_totient")
+            assert found["best_suggestion"] is None, (name, found)
+            print(f"PASS unseen public source {name}: incompatible opaque API "
+                  "rejected without fabrication", flush=True)
+        print("PASS 5 distinct pinned public sources, 2 existing project targets; "
               "discovery read-only, no unreviewed execution", flush=True)
 
 
