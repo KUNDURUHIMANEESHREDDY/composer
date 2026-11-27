@@ -172,10 +172,10 @@ def main() -> None:
             {"src/number_theory/euler_totient.rs"},
             expected_sha=GEOMETRY_SHA,
         )
-        exponent = make_capsule(
-            algo, root, "binary_exponentiation",
-            "src/math/binary_exponentiation.rs", "reviewed-exponent",
-            {"src/math/binary_exponentiation.rs"}, expected_sha=GEOMETRY_SHA,
+        cube = make_capsule(
+            algo, root, "perfect_cube_binary_search",
+            "src/math/perfect_cube.rs", "reviewed-cube",
+            {"src/math/perfect_cube.rs"}, expected_sha=GEOMETRY_SHA,
         )
         assert prepare_registry(hash_target, root, "rustc-hash"), "rustc-hash offline registry cache preparation failed"
         assert prepare_registry(ebtech, root, "ebtech"), "EbTech registry cache preparation failed"
@@ -194,15 +194,16 @@ def main() -> None:
                 "adapted_totient", "euler_totient=adapted_totient(u32)->u128",
             ))
             outcomes.append(case(
-                root, iteration, "exponent-rustc-hash", algo, exponent, hash_target, "rustc_hash",
-                "pub fn binary_exponentiation_checked(base: u16, power: u16) -> u128 { unimplemented!() }\n",
-                "use rustc_hash::binary_exponentiation_checked;\n"
-                "#[test] fn matches_exponentiation_contract() {\n"
-                "assert_eq!(binary_exponentiation_checked(2_u16, 10_u16), 1024_u128);\n"
-                "assert_eq!(binary_exponentiation_checked(3_u16, 4_u16), 81_u128);\n"
-                "assert_eq!(binary_exponentiation_checked(5_u16, 0_u16), 1_u128);\n}\n",
-                "binary_exponentiation_checked",
-                "binary_exponentiation=binary_exponentiation_checked(u16,u16)->u128",
+                root, iteration, "cube-rustc-hash", algo, cube, hash_target, "rustc_hash",
+                "pub fn perfect_cube_binary_search_checked(n: i32) -> bool { unimplemented!() }\n",
+                "use rustc_hash::perfect_cube_binary_search_checked;\n"
+                "#[test] fn matches_perfect_cube_contract() {\n"
+                "assert!(perfect_cube_binary_search_checked(27_i32));\n"
+                "assert!(perfect_cube_binary_search_checked(64_i32));\n"
+                "assert!(!perfect_cube_binary_search_checked(28_i32));\n"
+                "assert!(perfect_cube_binary_search_checked(-8_i32));\n}\n",
+                "perfect_cube_binary_search_checked",
+                "perfect_cube_binary_search=perfect_cube_binary_search_checked(i32)->bool",
             ))
         assert len(outcomes) == 6
         assert all(x["status"] == "verified" for x in outcomes)
