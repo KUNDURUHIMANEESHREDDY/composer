@@ -37,6 +37,10 @@ The Python behavioral run requires Docker, the pinned image and offline Cargo ca
 - GitHub's upstream dependency-review action was attempted but its GitHub dependency-diff API returned HTTP 403 both in CI and with the authenticated repository owner's CLI. This was an unavailable API, **not** an identified vulnerable dependency. The unusable workflow was replaced with upstream RustSec `cargo-audit` (installed using taiki-e/install-action with checksums, fallback disabled). This read-only workflow audits Composer's Cargo.lock from outside the untrusted checkout and is also scheduled weekly once merged. It reports **known** crate advisories, not runtime isolation, publisher provenance or unknown supply-chain vulnerabilities. Its hosted check must pass before the gate is considered operational.
 - The review still requires an unaffiliated security assessor and an explicit release decision.
 
+## RustSec finding and remediation
+- The first upstream RustSec 0.23.0 audit of Cargo.lock failed on RUSTSEC-2026-0592 affecting url 2.5.8 (nested blob-origin processing). No advisory suppression was added.
+- Updated the lockfile to url 2.5.9 (patched) and form_urlencoded 1.2.3. The complete native Rust workspace tests and strict Clippy passed after this update. A fresh hosted RustSec audit and full Docker acceptance must confirm the final commit.
+
 ## Preliminary automated scanning (not an external audit)
 - Semgrep 1.181.0 with the public p/rust ruleset reported **10 temp_dir findings** across Rust unit-test fixtures. All reported call sites are inside cfg(test) sections and use UUID-suffixed directories; they are **untriaged scanner findings**, not a clean scan or an external security conclusion.
 - Windows Docker daemon is unavailable (Linux engine named pipe missing). Only approximately 1.6 GiB of RAM was free when checked. Do not infer Docker behavioral results from host compilation.
