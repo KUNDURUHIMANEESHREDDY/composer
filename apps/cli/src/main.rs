@@ -129,6 +129,9 @@ enum Command {
         /// Repeat source::public_item=target_api_name for compiler-verified aliases.
         #[arg(long = "api-alias")]
         api_aliases: Vec<String>,
+        /// Repeat source::fn=target_fn(u16)->u64; only infallible Into wrappers.
+        #[arg(long = "api-signature")]
+        api_signatures: Vec<String>,
     },
     /// Verify 2-5 distinct Rust Feature Capsules in sequence, with rollback on any failure.
     VerifyRustBatch {
@@ -273,6 +276,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             license_reviewed,
             registry_cache,
             api_aliases,
+            api_signatures,
         } => {
             let result = compose_verified_rust(&VerifiedRustOptions {
                 capsule_root: capsule,
@@ -281,6 +285,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 license_reviewed,
                 registry_cache,
                 api_aliases,
+                api_signatures,
             })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }

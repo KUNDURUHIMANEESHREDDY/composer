@@ -32,6 +32,8 @@ pub struct VerifiedRustOptions {
     pub registry_cache: Option<PathBuf>,
     /// Optional explicit compiler-verified source_path=target_name API exports.
     pub api_aliases: Vec<String>,
+    /// Optional target-facing function contracts with compiler-inferred Into.
+    pub api_signatures: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +43,7 @@ pub struct VerifiedRustResult {
     pub new_dependencies: Vec<String>,
     pub compatible_constraints_retained: Vec<String>,
     pub verified_api_aliases: Vec<String>,
+    pub verified_api_signatures: Vec<String>,
     pub docker_image: String,
     pub offline_lockfile_resolved: bool,
     pub isolated_tests_passed: bool,
@@ -63,6 +66,7 @@ struct BuildEvidence {
     dependencies_added: Vec<String>,
     compatible_constraints_retained: Vec<String>,
     verified_api_aliases: Vec<String>,
+    verified_api_signatures: Vec<String>,
     repair_actions: Vec<String>,
     tests_passed: bool,
     elapsed_seconds: f64,
@@ -151,6 +155,9 @@ pub fn compose_verified_rust(
         })?;
         let verified_api_aliases =
             apply_verified_api_aliases(&staged, &wired.module_name, &options.api_aliases)?;
+        let verified_api_signatures = crate::api_signature::apply_verified_api_signatures(
+            &staged, &wired.module_name, &options.api_signatures, &options.api_aliases,
+        )?;
         preserve_source_attribution(&capsule.manifest, &capsule.root, &staged)?;
         let image_id = inspect_local_image_id()?;
         let user = nonroot_container_user()?;
@@ -198,6 +205,7 @@ pub fn compose_verified_rust(
             dependencies_added: added.clone(),
             compatible_constraints_retained: compatible_constraints_retained.clone(),
             verified_api_aliases: verified_api_aliases.clone(),
+            verified_api_signatures: verified_api_signatures.clone(),
             repair_actions: if logs.contains("COMPOSER_REPAIR: lockfile_regenerated") {
                 vec!["lockfile_regenerated_once_after_missing_or_stale_check".into()]
             } else {
@@ -218,6 +226,7 @@ pub fn compose_verified_rust(
             new_dependencies: added,
             compatible_constraints_retained,
             verified_api_aliases,
+            verified_api_signatures,
             docker_image: DEFAULT_IMAGE.into(),
             offline_lockfile_resolved: true,
             isolated_tests_passed: true,
@@ -1186,6 +1195,7 @@ mod tests {
             license_reviewed: false,
             registry_cache: None,
             api_aliases: Vec::new(),
+            api_signatures: Vec::new(),
         });
         assert!(matches!(result, Err(VerifiedRustError::ReviewRequired)));
     }
