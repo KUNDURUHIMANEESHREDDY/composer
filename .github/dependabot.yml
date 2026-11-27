@@ -1,0 +1,19 @@
+# Dependabot only opens reviewable pull requests. Never auto-merge dependency changes.
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:15"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 5
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:45"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 5

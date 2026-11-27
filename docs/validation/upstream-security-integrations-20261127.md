@@ -34,3 +34,15 @@ The added actions and reusable workflow are pinned to their reviewed Git revisio
 6. Decide and document signing trust identity: existing GitHub Sigstore build attestation is verified; Cosign should be added only for a concrete separately signed artifact and a pinned, trusted issuer/identity policy. Do not create self-signed green checks.
 
 **Do not merge solely on automated scanner success.** Independent security signoff and installation/release gates remain mandatory.
+
+## First hosted OpenSSF Scorecard findings (PR #43, commit `c788f6c`)
+
+The [Scorecard run](https://github.com/KUNDURUHIMANEESHREDDY/composer/actions/runs/46037946600) completed successfully and produced a six-result SARIF artifact. **Scanner execution success is not a passing security score.**
+
+- `SecurityPolicyID` score 0: `.github/SECURITY.md` has now been added; require a fresh scan before marking remediated.
+- `DependencyUpdateToolID` score 0: `.github/dependabot.yml` has now been added for weekly reviewed Cargo and GitHub Actions update PRs; require a fresh scan before marking remediated.
+- `LicenseID` score 0: unresolved; repository owner must explicitly select a valid license.
+- `FuzzingID` score 0: unresolved; do not claim coverage from independent functional tests alone.
+- Two `TokenPermissionsID` results score 9: justified writes in individual jobs still merit review; no broad token elevation was added.
+
+The same head's hosted [OSV-Scanner job](https://github.com/KUNDURUHIMANEESHREDDY/composer/actions/runs/46037947006) passed. The `cargo-deny` job failed, consistently with missing first-party licensing metadata. Do not mask this failure by relaxing the policy.
