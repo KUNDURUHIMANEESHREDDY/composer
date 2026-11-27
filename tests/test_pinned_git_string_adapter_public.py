@@ -207,7 +207,7 @@ def main():
             "invalid_signature_rejected": True,
             "missing_adapter_rejected": True,
             "wrong_commit_rejected": True,
-            "limitations": "User-supplied reviewed signature; not open-world semantic inference. Rust compiler and independent contracts verify only exercised behavior. Docker is not VM isolation.",
+            "limitations": "Caller supplies reviewed source, target alias and independent behavior contract. Tree-sitter infers only a unique public borrowed-string type shape, not semantics; compiler and tests verify only exercised behavior. Docker is not VM isolation.",
         }, sort_keys=True), flush=True)
 
 
