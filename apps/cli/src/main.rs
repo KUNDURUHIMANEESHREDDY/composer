@@ -131,6 +131,9 @@ enum Command {
         /// Target-visible name for the existing upstream public function.
         #[arg(long)]
         target_alias: String,
+        /// Reviewed target API, e.g. transliterate(String)->String.
+        #[arg(long)]
+        target_signature: Option<String>,
         /// Existing independent target-owned behavior tests.
         #[arg(long)]
         contract_test: PathBuf,
@@ -212,6 +215,9 @@ enum Command {
         /// Target-visible API name referenced by the contract test.
         #[arg(long)]
         target_alias: String,
+        /// Reviewed target-owned API, e.g. ported(String)->String; only bounded String borrowing.
+        #[arg(long)]
+        target_signature: Option<String>,
         /// Existing independent target-owned tests/<name>.rs contract.
         #[arg(long)]
         contract_test: PathBuf,
@@ -350,6 +356,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             target,
             output,
             target_alias,
+            target_signature,
             contract_test,
             registry_cache,
             excluded_owners,
@@ -362,6 +369,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     target,
                     output,
                     target_alias,
+                    target_signature,
                     contract_test,
                     registry_cache,
                     excluded_owners,
@@ -442,6 +450,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             version,
             public_symbol,
             target_alias,
+            target_signature,
             contract_test,
             registry_cache,
             upstream_repository,
@@ -455,6 +464,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 version,
                 public_symbol,
                 target_alias,
+                target_signature,
                 contract_test,
                 registry_cache,
                 upstream_repository,
