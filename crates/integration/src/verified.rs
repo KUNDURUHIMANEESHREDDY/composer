@@ -1043,6 +1043,28 @@ pub(crate) fn docker_build_with_git_cache(
     )
 }
 
+/// External gVisor runsc is an opt-in Docker OCI runtime: Composer never
+/// implements a sandbox kernel or silently downgrades a requested runtime.
+/// Docker's own engine/runtime registry is responsible for executing runsc.
+fn validated_verifier_runtime(requested: Option<&str>) -> Result<Option<&'static str>, VerifiedRustError> {
+    match requested {
+        None => Ok(None),
+        Some("runsc") => Ok(Some("runsc")),
+        Some(_) => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_RUNTIME; supported hardened option is exactly runsc; refusing fallback to default Docker runtime".into(),
+        )),
+    }
+}
+
+fn selected_verifier_runtime() -> Result<Option<&'static str>, VerifiedRustError> {
+    match std::env::var_os("COMPOSER_VERIFIER_RUNTIME") {
+        None => validated_verifier_runtime(None),
+        Some(value) => validated_verifier_runtime(Some(value.to_str().ok_or_else(|| {
+            VerifiedRustError::Unsafe("COMPOSER_VERIFIER_RUNTIME must be UTF-8".into())
+        })?)),
+    }
+}
+
 fn docker_build_internal(
     staged: &Path,
     results: &Path,
@@ -1051,6 +1073,8 @@ fn docker_build_internal(
     image_id: &str,
     container_user: &str,
 ) -> Result<String, VerifiedRustError> {
+    // A requested gVisor runtime is mandatory, never best-effort.
+    let requested_runtime = selected_verifier_runtime()?;
     // No shell expansion from user input: a fixed script with process arguments.
     const SCRIPT: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
     let name = format!("composer-verify-{}", Uuid::new_v4().simple());
@@ -1087,6 +1111,11 @@ fn docker_build_internal(
         "--mount",
         &mount_arg(results, "/results", false)?,
     ]);
+    if let Some(runtime) = requested_runtime {
+        // Docker must recognize runsc; if unavailable, docker run fails closed.
+        // This does not mutate daemon configuration or select a weaker fallback.
+        cmd.arg(format!("--runtime={runtime}"));
+    }
     if let Some(registry) = registry {
         let path = registry.canonicalize()?;
         let valid_cargo_registry = path.file_name().is_some_and(|name| name == "registry")
@@ -1193,12 +1222,24 @@ fn docker_build_internal(
     let _ = Command::new("docker").args(["rm", "-f", &name]).output();
     let logs: String = logs.chars().take(MAX_LOG_CHARS).collect();
     result.map_err(|err| VerifiedRustError::Docker(format!("{err}\nContainer output:\n{logs}")))?;
-    Ok(logs)
+    Ok(format!(
+        "COMPOSER_DOCKER_RUNTIME={}\n{logs}",
+        requested_runtime.unwrap_or("docker-default")
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_gvisor_runtime_selection_refuses_unknown_or_empty_fallbacks() {
+        assert_eq!(validated_verifier_runtime(None).unwrap(), None);
+        assert_eq!(validated_verifier_runtime(Some("runsc")).unwrap(), Some("runsc"));
+        for invalid in ["", "runc", "kata", "runsc --privileged", " runsc", "RUNSC"] {
+            assert!(validated_verifier_runtime(Some(invalid)).is_err(), "{invalid}");
+        }
+    }
 
     /// Unit-level constraint gate: this deliberately bypasses wiring because
     /// the current source-import closure rejects external imports earlier.
