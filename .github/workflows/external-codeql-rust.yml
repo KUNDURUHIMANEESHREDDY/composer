@@ -37,3 +37,37 @@ jobs:
         uses: github/codeql-action/analyze@bf58c2ac1f8060aa73f1225f461c80391348076a
         with:
           category: /language:rust
+          output: codeql-rust-raw
+          post-processed-sarif-path: codeql-rust-findings
+      - name: Fail on unreviewed security findings from the independent scanner
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import sys
+          files = sorted(pathlib.Path("codeql-rust-findings").rglob("*.sarif"))
+          if not files:
+              raise SystemExit("CodeQL produced no reviewable SARIF; refusing release acceptance")
+          total = 0
+          for file in files:
+              data = json.loads(file.read_text(encoding="utf-8"))
+              for run in data.get("runs", []):
+                  findings = [r for r in run.get("results", []) if not r.get("suppressions")]
+                  for result in findings[:30]:
+                      print("UNREVIEWED_CODEQL_FINDING", result.get("ruleId"), result.get("level"))
+                  total += len(findings)
+          print("CODEQL_SARIF_FILES", len(files))
+          print("UNREVIEWED_CODEQL_FINDINGS", total)
+          if total:
+              sys.exit(1)
+          PY
+      - name: Retain original external scanner evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: independent-codeql-rust-sarif
+          path: |
+            codeql-rust-raw/
+            codeql-rust-findings/
+          if-no-files-found: warn
