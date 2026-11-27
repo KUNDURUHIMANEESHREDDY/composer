@@ -1019,6 +1019,33 @@ pub(crate) fn docker_build(
     image_id: &str,
     container_user: &str,
 ) -> Result<String, VerifiedRustError> {
+    docker_build_internal(staged, results, registry, None, image_id, container_user)
+}
+
+/// Reuse the same restricted Docker pipeline for pinned Cargo Git dependencies.
+/// Only the already fetched Cargo git storage is mounted, never the Cargo home
+/// directory or its credentials/configuration.
+pub(crate) fn docker_build_with_git_cache(
+    staged: &Path,
+    results: &Path,
+    registry: Option<&Path>,
+    git_cache: &Path,
+    image_id: &str,
+    container_user: &str,
+) -> Result<String, VerifiedRustError> {
+    docker_build_internal(
+        staged, results, registry, Some(git_cache), image_id, container_user,
+    )
+}
+
+fn docker_build_internal(
+    staged: &Path,
+    results: &Path,
+    registry: Option<&Path>,
+    git_cache: Option<&Path>,
+    image_id: &str,
+    container_user: &str,
+) -> Result<String, VerifiedRustError> {
     // No shell expansion from user input: a fixed script with process arguments.
     const SCRIPT: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
     let name = format!("composer-verify-{}", Uuid::new_v4().simple());
@@ -1074,6 +1101,25 @@ pub(crate) fn docker_build(
         }
         cmd.arg("--mount")
             .arg(mount_arg(&path, "/tmp/cargo/registry", true)?);
+    }
+    if let Some(git_cache) = git_cache {
+        let path = git_cache.canonicalize()?;
+        let valid_cargo_git = path.file_name().is_some_and(|name| name == "git")
+            && path.parent().is_some_and(|parent| {
+                parent.file_name().is_some_and(|name| name == ".cargo")
+                    || std::env::var_os("CARGO_HOME").is_some_and(|home| parent == Path::new(&home))
+            });
+        if !valid_cargo_git || !path.is_dir()
+            || fs::symlink_metadata(&path)?.file_type().is_symlink()
+        {
+            return Err(VerifiedRustError::Unsafe(
+                "Git cache mount must be a regular Cargo git directory under CARGO_HOME".into(),
+            ));
+        }
+        // Cargo's fetched DB/checkouts contain Git commits, not Cargo
+        // credentials or a writable dependency cache. Offline is mandatory.
+        cmd.arg("--mount")
+            .arg(mount_arg(&path, "/tmp/cargo/git", true)?);
     }
     cmd.args(["--entrypoint", "sh", image_id, "-c", SCRIPT]);
     let launched = cmd
