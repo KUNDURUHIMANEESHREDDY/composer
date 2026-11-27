@@ -141,7 +141,10 @@ fn tracked_blob_matches(
     // Git (not custom hash logic) computes and verifies the stored blob ID.
     let git_path = format!("{revision}:{relative_path}");
     let expected = git_read(checkout, &["rev-parse", "--verify", &git_path])?;
-    let actual = git_read(checkout, &["hash-object", "--no-filters", "--", relative_path])?;
+    let actual = git_read(
+        checkout,
+        &["hash-object", "--no-filters", "--", relative_path],
+    )?;
     if expected.len() != 40
         || expected != actual
         || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -215,7 +218,9 @@ fn checkout_license(
     // not only the ref name and worktree "clean" status.
     let tree_oid = git_read(checkout, &["rev-parse", "--verify", "HEAD^{tree}"])?;
     if tree_oid.len() != 40 || !tree_oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(VerifiedRustError::Unsafe("invalid upstream Git tree object".into()));
+        return Err(VerifiedRustError::Unsafe(
+            "invalid upstream Git tree object".into(),
+        ));
     }
     let manifest_blob_oid = tracked_blob_matches(checkout, rev, "Cargo.toml")?;
     // Unpublished Git-only libraries often supply a LICENSE file without
@@ -327,8 +332,7 @@ pub fn verify_upstream_git(
             "Git SHA, package, public symbol or target alias invalid".into(),
         ));
     }
-    let reviewed =
-        checkout_license(&options.upstream_checkout, &options.package, &repo, rev)?;
+    let reviewed = checkout_license(&options.upstream_checkout, &options.package, &repo, rev)?;
     let original = options.target_root.canonicalize()?;
     validate_contract_test(&original, &options.contract_test, &options.target_alias)?;
     let target_manifest = original.join("Cargo.toml");
