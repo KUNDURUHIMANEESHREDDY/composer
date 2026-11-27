@@ -175,6 +175,48 @@ The generated adapter contract is a draft that lists candidate symbols and unres
 
 `composer integrate` remains safe staging only. The opt-in `composer wire-rust` command provides restricted single-file Rust wiring with a persistent entrypoint backup. `composer verify-rust` extends it with conservative missing-dependency adoption, offline Cargo lockfile solving, and Docker-isolated compilation/tests on a newly generated target copy; it publishes the copy and evidence only after success. General-purpose adapter generation and broader dependency solving remain unimplemented.
 
+## Reuse existing third-party packages (no feature reimplementation)
+
+Prefer adopting an existing, independently maintained published library when the
+requested capability already exists upstream. \`composer verify-external-rust-crate\`
+adds an **exact crates.io release** to a disposable copy of a standalone Rust
+target, re-exports one reviewed public function, and runs **existing target-owned
+behavioral tests** with Composer's restricted offline Docker Cargo verifier.
+
+For example, the independent [rapidfuzz/strsim-rs](https://github.com/rapidfuzz/strsim-rs)
+project publishes the MIT-licensed \`strsim\` crate. To reuse its \`jaro\`
+function in an unrelated target instead of rewriting Jaro from scratch:
+
+\`\`\`sh
+cargo run -p composer-cli -- verify-external-rust-crate path/to/target \
+  --output path/to/verified-output \
+  --package strsim --version 0.11.1 \
+  --public-symbol jaro --target-alias ported_jaro \
+  --contract-test tests/external_contract.rs \
+  --registry-cache "$HOME/.cargo/registry" \
+  --upstream-repository https://github.com/rapidfuzz/strsim-rs \
+  --upstream-commit dacc84c0dc61eff0ee0ff66962bcf2e17018ad26 \
+  --license-reviewed
+\`\`\`
+
+The target must already contain an independently authored, active integration
+test asserting \`ported_jaro(...)\` behavior. The exact released crate and all
+its dependency artifacts must be pre-cached using **Cargo fetch only** on a
+throwaway manifest, before offline Docker verification. Composer neither
+downloads nor executes upstream source or build scripts on the host. On success,
+it publishes a new copy with an exact \`=version\` requirement, re-export,
+Cargo.lock/checksum and \`composer-upstream-crate-evidence.json\`. On any failure
+it publishes no result and leaves the original unchanged.
+
+The supplied GitHub commit and license-review flag are **human assertions**.
+A crates.io checksum identifies the resolved package archive; Composer does
+**not** establish cryptographic correspondence between the supplied upstream
+Git commit and that published archive. It does not provide automatic capability
+search, license clearance, total semantic equivalence or VM-grade isolation.
+Only a single public function re-export from a standard crates.io package is
+supported; complex adapters and Git-only/unpublished repositories still need
+additional verification work.
+
 ## Current limitations
 
 - Public HTTPS GitHub acquisition only; shallow default-branch checkout.
