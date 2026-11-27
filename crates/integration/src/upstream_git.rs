@@ -105,10 +105,22 @@ fn git_read(path: &Path, args: &[&str]) -> Result<String, VerifiedRustError> {
     command
         .arg("-C")
         .arg(path)
-        .args(["-c", "protocol.ext.allow=never"])
+        // `git status` consults checkout-local .git/config before the source is
+        // trusted. `core.fsmonitor` can execute an arbitrary helper on the HOST.
+        // Disable it (and optional index caching) with highest-precedence CLI
+        // config. The existing Git executable does only read-only metadata.
+        .args([
+            "-c",
+            "protocol.ext.allow=never",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.untrackedCache=false",
+        ])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_ASKPASS", "");
+        .env("GIT_ASKPASS", "")
+        .env("GIT_OPTIONAL_LOCKS", "0");
     let out = command
         .output()
         .map_err(|err| VerifiedRustError::Unsafe(format!("Git metadata unavailable: {err}")))?;
@@ -516,6 +528,61 @@ mod tests {
             verify_upstream_git(&opts),
             Err(VerifiedRustError::ReviewRequired)
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn host_git_metadata_disables_checkout_controlled_fsmonitor() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = std::env::temp_dir().join(format!("composer-git-fsmonitor-{}", Uuid::new_v4()));
+        let checkout = base.join("checkout");
+        fs::create_dir_all(&checkout).unwrap();
+
+        // Build a disposable legitimate Git checkout, then add a malicious
+        // repository-local fsmonitor helper. A regular host `git status`
+        // would execute this helper before Composer has reviewed the source.
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(&checkout)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "disposable Git setup failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "composer-tests@example.invalid"]);
+        git(&["config", "user.name", "Composer CI"]);
+        fs::write(checkout.join("README.md"), "legitimate reviewed source\n").unwrap();
+        git(&["add", "README.md"]);
+        git(&["commit", "-qm", "create fixture"]);
+
+        let marker = base.join("host-helper-executed");
+        let helper = base.join("untrusted-monitor.sh");
+        fs::write(
+            &helper,
+            format!(
+                "#!/bin/sh\nprintf triggered > '{}'\necho /\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+        git(&["config", "core.fsmonitor", helper.to_str().unwrap()]);
+
+        let clean = git_read(&checkout, &["status", "--porcelain", "--untracked-files=all"])
+            .expect("Composer must still verify a clean checkout");
+        assert!(clean.is_empty());
+        assert!(
+            !marker.exists(),
+            "host Git metadata executed repository-controlled fsmonitor code"
+        );
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
