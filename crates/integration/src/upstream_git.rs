@@ -507,6 +507,14 @@ fn reject_host_git_filter_commands(checkout: &Path) -> Result<(), VerifiedRustEr
 }
 
 #[derive(Debug, Clone)]
+struct ReviewedLegalDocument {
+    original_path: String,
+    bytes: Vec<u8>,
+    sha256: String,
+    git_blob_oid: String,
+}
+
+#[derive(Debug, Clone)]
 struct ReviewedSourceEvidence {
     license_bytes: Vec<u8>,
     license_sha256: String,
@@ -514,6 +522,7 @@ struct ReviewedSourceEvidence {
     manifest_blob_oid: String,
     license_blob_oid: String,
     license_path: String,
+    supplemental_legal_documents: Vec<ReviewedLegalDocument>,
 }
 
 fn tracked_blob_matches(
@@ -565,6 +574,61 @@ fn verify_trusted_upstream_signer(
         ));
     }
     Ok(actual.to_ascii_uppercase())
+}
+
+/// Retain all known root-level license alternatives, notices and copyright
+/// evidence. The primary license remains separately recorded for API
+/// compatibility; these additional files must match pinned Git blobs too.
+fn supplemental_legal_documents(
+    checkout: &Path,
+    revision: &str,
+    primary: &str,
+) -> Result<Vec<ReviewedLegalDocument>, VerifiedRustError> {
+    let mut documents = Vec::new();
+    for name in [
+        "LICENSE",
+        "LICENSE-MIT",
+        "LICENSE-APACHE",
+        "LICENSE.md",
+        "COPYING",
+        "NOTICE",
+        "NOTICE.md",
+        "COPYRIGHT",
+    ] {
+        if name == primary {
+            continue;
+        }
+        let path = checkout.join(name);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if !metadata.is_file()
+            || metadata.file_type().is_symlink()
+            || metadata.len() == 0
+            || metadata.len() > 512 * 1024
+        {
+            return Err(VerifiedRustError::Unsafe(
+                "upstream legal notice is not a bounded regular file".into(),
+            ));
+        }
+        let bytes = fs::read(&path)?;
+        if bytes.len() as u64 != metadata.len() {
+            return Err(VerifiedRustError::Unsafe(
+                "upstream legal notice changed while being reviewed".into(),
+            ));
+        }
+        let sha256 = format!("{:x}", Sha256::digest(&bytes));
+        let git_blob_oid = tracked_blob_matches(checkout, revision, name)?;
+        documents.push(ReviewedLegalDocument {
+            original_path: name.to_owned(),
+            bytes,
+            sha256,
+            git_blob_oid,
+        });
+    }
+    Ok(documents)
 }
 
 fn checkout_license(
@@ -663,6 +727,7 @@ fn checkout_license(
         let bytes = fs::read(&file)?;
         let checksum = format!("{:x}", Sha256::digest(&bytes));
         let license_blob_oid = tracked_blob_matches(checkout, rev, name)?;
+        let supplemental_legal_documents = supplemental_legal_documents(checkout, rev, name)?;
         return Ok(ReviewedSourceEvidence {
             license_bytes: bytes,
             license_sha256: checksum,
@@ -670,6 +735,7 @@ fn checkout_license(
             manifest_blob_oid,
             license_blob_oid,
             license_path: name.to_owned(),
+            supplemental_legal_documents,
         });
     }
     Err(VerifiedRustError::Unsafe(
@@ -1107,6 +1173,23 @@ pub fn verify_upstream_git(
         fs::create_dir_all(&licenses)?;
         let notice = format!("{}-git-license.txt", options.package);
         fs::write(licenses.join(&notice), &reviewed.license_bytes)?;
+        let mut supplemental_notices = Vec::new();
+        for (index, document) in reviewed.supplemental_legal_documents.iter().enumerate() {
+            let filename = format!("{}-git-legal-{index}.txt", options.package);
+            let path = licenses.join(&filename);
+            if fs::symlink_metadata(&path).is_ok() {
+                return Err(VerifiedRustError::Unsafe(
+                    "upstream legal notice output already exists".into(),
+                ));
+            }
+            fs::write(&path, &document.bytes)?;
+            supplemental_notices.push(serde_json::json!({
+                "original_path": document.original_path,
+                "published_path": format!("third_party_licenses/{filename}"),
+                "sha256": document.sha256,
+                "reviewed_git_blob_oid": document.git_blob_oid,
+            }));
+        }
         let evidence = serde_json::json!({
             "schema_version": 1,
             "mode": "reuse_pinned_git_dependency",
@@ -1117,6 +1200,9 @@ pub fn verify_upstream_git(
             "cargo_lock_commit_verified": true,
             "license_sha256": reviewed.license_sha256,
             "license_notice": format!("third_party_licenses/{notice}"),
+            // Keep legacy primary-license fields stable and inventory every
+            // additional notice/license alternative with its pinned Git blob.
+            "additional_legal_documents": supplemental_notices,
             "reviewed_license_source_path": reviewed.license_path,
             "reviewed_source_tree_oid": reviewed.tree_oid,
             "reviewed_manifest_blob_oid": reviewed.manifest_blob_oid,
@@ -1453,6 +1539,66 @@ mod tests {
             "included Git filter executed during config scan"
         );
         fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn pinned_git_review_retains_all_original_notices_and_refuses_changed_blobs() {
+        let root = std::env::temp_dir().join(format!("composer-notices-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "Git fixture setup: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "composer-tests@example.invalid"]);
+        git(&["config", "user.name", "Composer Tests"]);
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/example/notice-fixture.git",
+        ]);
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = 'notice-fixture'\nversion = '0.1.0'\n",
+        )
+        .unwrap();
+        fs::write(root.join("LICENSE"), "Primary upstream license\n").unwrap();
+        fs::write(root.join("LICENSE-MIT"), "Alternative MIT terms\n").unwrap();
+        fs::write(root.join("NOTICE"), "Upstream author attribution\n").unwrap();
+        git(&["add", "Cargo.toml", "LICENSE", "LICENSE-MIT", "NOTICE"]);
+        git(&["commit", "-qm", "reviewed pinned source"]);
+        let sha = git_read(&root, &["rev-parse", "HEAD"]).unwrap();
+        let repository =
+            GitHubRepository::parse("https://github.com/example/notice-fixture").unwrap();
+        let reviewed = checkout_license(&root, "notice-fixture", &repository, &sha).unwrap();
+        assert_eq!(reviewed.license_path, "LICENSE");
+        let legal = &reviewed.supplemental_legal_documents;
+        assert_eq!(legal.len(), 2);
+        assert_eq!(legal[0].original_path, "LICENSE-MIT");
+        assert_eq!(legal[1].original_path, "NOTICE");
+        for document in legal {
+            assert_eq!(
+                document.sha256,
+                format!("{:x}", Sha256::digest(&document.bytes))
+            );
+            assert_eq!(document.git_blob_oid.len(), 40);
+        }
+        // A clean Git revision is required; a modified notice cannot be
+        // silently published under the old pinned source identity.
+        fs::write(root.join("NOTICE"), "Altered notice after review\n").unwrap();
+        assert!(supplemental_legal_documents(&root, &sha, "LICENSE").is_err());
+        assert!(checkout_license(&root, "notice-fixture", &repository, &sha).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
