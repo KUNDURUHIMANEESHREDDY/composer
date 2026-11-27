@@ -124,7 +124,10 @@ fn git_read(path: &Path, args: &[&str]) -> Result<String, VerifiedRustError> {
         .env("GIT_ASKPASS", "")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
         .env("GIT_ATTR_NOSYSTEM", "1")
         .env_remove("GIT_CONFIG_PARAMETERS")
         .env_remove("GIT_CONFIG_COUNT")
@@ -150,9 +153,7 @@ fn reject_host_git_filter_commands(checkout: &Path) -> Result<(), VerifiedRustEr
     for key in keys.lines() {
         let key = key.trim().to_ascii_lowercase();
         if key.starts_with("filter.")
-            && (key.ends_with(".clean")
-                || key.ends_with(".smudge")
-                || key.ends_with(".process"))
+            && (key.ends_with(".clean") || key.ends_with(".smudge") || key.ends_with(".process"))
         {
             return Err(VerifiedRustError::Unsafe(
                 "checkout Git filter helper configuration cannot execute on the host".into(),
@@ -643,7 +644,11 @@ mod tests {
         git(&["init", "-q"]);
         git(&["config", "user.name", "Composer CI"]);
         git(&["config", "user.email", "composer-tests@example.invalid"]);
-        fs::write(checkout.join(".gitattributes"), "payload.txt filter=attack\n").unwrap();
+        fs::write(
+            checkout.join(".gitattributes"),
+            "payload.txt filter=attack\n",
+        )
+        .unwrap();
         fs::write(checkout.join("payload.txt"), "verified source\n").unwrap();
         git(&["add", ".gitattributes", "payload.txt"]);
         git(&["commit", "-qm", "original clean checkout"]);
@@ -658,7 +663,10 @@ mod tests {
         fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
         git(&["config", "filter.attack.clean", helper.to_str().unwrap()]);
         assert!(reject_host_git_filter_commands(&checkout).is_err());
-        assert!(!marker.exists(), "configured filter executed during config scan");
+        assert!(
+            !marker.exists(),
+            "configured filter executed during config scan"
+        );
 
         // Git config include.path can load another checkout-controlled filter.
         git(&["config", "--unset", "filter.attack.clean"]);
@@ -670,7 +678,10 @@ mod tests {
         .unwrap();
         git(&["config", "include.path", extra.to_str().unwrap()]);
         assert!(reject_host_git_filter_commands(&checkout).is_err());
-        assert!(!marker.exists(), "included Git filter executed during config scan");
+        assert!(
+            !marker.exists(),
+            "included Git filter executed during config scan"
+        );
         fs::remove_dir_all(base).unwrap();
     }
 
