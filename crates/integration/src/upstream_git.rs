@@ -169,8 +169,7 @@ fn verify_trusted_upstream_signer(
 ) -> Result<String, VerifiedRustError> {
     // Reuse installed Git and the user's trusted OpenPGP keyring; no custom
     // signature verifier. Never accept unsigned or unknown-trust signatures.
-    if !matches!(expected.len(), 40 | 64)
-        || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
+    if !matches!(expected.len(), 40 | 64) || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
         return Err(VerifiedRustError::Unsafe(
             "required upstream signer fingerprint must be 40 or 64 hex characters".into(),
