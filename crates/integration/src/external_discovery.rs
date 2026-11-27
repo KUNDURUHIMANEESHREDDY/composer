@@ -405,18 +405,17 @@ mod tests {
         assert!(public_symbol_from_sources(&dir, "example", "1.2.3", "fake").is_none());
         // Multiple legitimate public paths are ranked, never considered
         // semantic proof, and the conventional string API is preferred.
-        fs::write(
-            crate_dir.join("lib.rs"),
-            "pub mod nstr;\npub mod str;\n",
-        ).unwrap();
+        fs::write(crate_dir.join("lib.rs"), "pub mod nstr;\npub mod str;\n").unwrap();
         fs::write(
             crate_dir.join("str.rs"),
             "pub fn jaro(a: &str, b: &str) -> f64 { if a == b {1.0} else {0.0} }\n",
-        ).unwrap();
+        )
+        .unwrap();
         fs::write(
             crate_dir.join("nstr.rs"),
             "pub fn jaro(a: &str, b: &str) -> f64 { if a == b {1.0} else {0.0} }\n",
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(
             public_symbol_from_sources(&dir, "example", "1.2.3", "jaro").as_deref(),
             Some("str::jaro"),
