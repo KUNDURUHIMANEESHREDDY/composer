@@ -1,0 +1,28 @@
+name: Pinned public Rust multi-file benchmark
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/pinned-multifile-realworld-benchmark
+    paths:
+      - .github/workflows/pinned-public-multifile.yml
+      - tests/test_pinned_public_multifile.py
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-public-multifile:
+    if: github.repository == 'KUNDURUHIMANEESHREDDY/composer'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out Composer
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Prepare restricted Docker verification image
+        run: docker pull rust:1.99-slim
+      - name: Validate pinned public multi-file source against existing targets
+        run: python3 tests/test_pinned_public_multifile.py
