@@ -13,8 +13,8 @@ upstream repositories, different capabilities, and unrelated target projects.
 - \`weihanglo/rust-algorithm-club\`, SHA
   \`1954301f21d44c18ea44864a776a3f6fd72eaefe\`,
   existing optimized and naive \`levenshtein_distance\` functions into
-  \`alexfertel/rust-algorithms\` at
-  \`06c906d13f5b197d14b4507c87b38eacde7c670a\`.
+  \`life4/textdistance.rs\` at
+  \`0f92088dfc84a99a7652b3f6d7e268afd98dbaa6\`.
 
 The CI acceptance requires independent target-owned semantic assertions
 and fail-closed rejection of a wrong but type-compatible function, exact
