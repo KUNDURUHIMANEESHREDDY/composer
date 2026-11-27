@@ -10,6 +10,7 @@ mod dependencies;
 mod multifile;
 mod reviewed;
 mod upstream_crate;
+mod upstream_recovery;
 mod verified;
 mod verify;
 mod wire;
@@ -30,6 +31,10 @@ pub use compatibility::{
 pub use dependencies::{
     DependencyEcosystem, DependencyInventory, DependencyKind, DependencyRequirement,
     LicenseDeclaration, RequirementStatus,
+};
+pub use upstream_recovery::{
+    UpstreamRecoveryAttempt, UpstreamRecoveryCandidate, UpstreamRecoveryOptions,
+    UpstreamRecoveryResult, recover_upstream_crate,
 };
 pub use upstream_crate::{UpstreamCrateOptions, UpstreamCrateResult, verify_upstream_crate};
 pub use verified::{
