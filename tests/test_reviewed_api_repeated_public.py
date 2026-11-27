@@ -148,9 +148,10 @@ def main() -> None:
             {"src/number_theory/euler_totient.rs"},
             expected_sha=GEOMETRY_SHA,
         )
-        gcd = make_capsule(
-            ebtech, root, "fast_gcd", "src/math/num.rs", "reviewed-gcd",
-            {"src/math/num.rs"}, expected_sha=SOURCE_SHA,
+        exponent = make_capsule(
+            algo, root, "binary_exponentiation",
+            "src/math/binary_exponentiation.rs", "reviewed-exponent",
+            {"src/math/binary_exponentiation.rs"}, expected_sha=GEOMETRY_SHA,
         )
         assert prepare_registry(glob, root, "glob"), "glob offline registry cache preparation failed"
         assert prepare_registry(ebtech, root, "ebtech"), "EbTech registry cache preparation failed"
@@ -169,14 +170,15 @@ def main() -> None:
                 "adapted_totient", "euler_totient=adapted_totient(u32)->u128",
             ))
             outcomes.append(case(
-                root, iteration, "gcd-glob", ebtech, gcd, glob, "glob",
-                "pub fn fast_gcd_checked(a: i32, b: i32) -> i64 { unimplemented!() }\n",
-                "use glob::fast_gcd_checked;\n"
-                "#[test] fn matches_gcd_contract() {\n"
-                "assert_eq!(fast_gcd_checked(27, 18), 9_i64);\n"
-                "assert_eq!(fast_gcd_checked(17, 13), 1_i64);\n"
-                "assert_eq!(fast_gcd_checked(0, 18), 18_i64);\n}\n",
-                "fast_gcd_checked", "fast_gcd=fast_gcd_checked(i32,i32)->i64",
+                root, iteration, "exponent-glob", algo, exponent, glob, "glob",
+                "pub fn binary_exponentiation_checked(base: u16, power: u16) -> u128 { unimplemented!() }\n",
+                "use glob::binary_exponentiation_checked;\n"
+                "#[test] fn matches_exponentiation_contract() {\n"
+                "assert_eq!(binary_exponentiation_checked(2_u16, 10_u16), 1024_u128);\n"
+                "assert_eq!(binary_exponentiation_checked(3_u16, 4_u16), 81_u128);\n"
+                "assert_eq!(binary_exponentiation_checked(5_u16, 0_u16), 1_u128);\n}\n",
+                "binary_exponentiation_checked",
+                "binary_exponentiation=binary_exponentiation_checked(u16,u16)->u128",
             ))
         assert len(outcomes) == 6
         assert all(x["status"] == "verified" for x in outcomes)
@@ -185,7 +187,7 @@ def main() -> None:
             "total_attempts": len(outcomes),
             "successful_attempts": len(outcomes),
             "cases": outcomes,
-            "limitations": "Two curated source functions; target contract tests supplied manually; no general reliability inference.",
+            "limitations": "Two curated source functions from one pinned public source repo, two unrelated existing public targets; contract tests supplied manually; no general reliability inference.",
         }, sort_keys=True), flush=True)
         print("PASS 6/6 reviewed suggestion -> offline Docker compilation -> "
               "independent target contract checks on two existing public targets",
