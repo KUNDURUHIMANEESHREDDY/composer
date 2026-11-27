@@ -3,9 +3,9 @@ use std::{error::Error, fs, net::SocketAddr, path::PathBuf};
 use clap::{Parser, Subcommand};
 use composer_core::ProjectSpec;
 use composer_integration::{
-    BatchRustOptions, IntegrationOptions, RustWiringOptions, VerifiedRustOptions,
+    BatchRustOptions, IntegrationOptions, RustWiringOptions, UpstreamCrateOptions, VerifiedRustOptions,
     apply_integration, compose_verified_rust, compose_verified_rust_batch,
-    discover_rust_api_contracts, plan_integration, verify_capsule, wire_rust_module,
+    discover_rust_api_contracts, plan_integration, verify_capsule, verify_upstream_crate, wire_rust_module,
 };
 use composer_intelligence::{
     CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
@@ -149,6 +149,42 @@ enum Command {
         /// Pre-existing independent test that calls the target stub.
         #[arg(long = "contract-test")]
         contract_test: Option<PathBuf>,
+    },
+    /// Reuse a published crate from an independently reviewed public Rust repository.
+    /// Cargo resolves exact registry artifacts; Composer never regenerates upstream source.
+    VerifyExternalRustCrate {
+        /// Original standalone Cargo library; never modified.
+        target: PathBuf,
+        /// New output directory, published only after isolated offline tests pass.
+        #[arg(long)]
+        output: PathBuf,
+        /// Published crates.io package name.
+        #[arg(long)]
+        package: String,
+        /// Exact published version (not a semver range).
+        #[arg(long)]
+        version: String,
+        /// Existing upstream public function to re-export.
+        #[arg(long)]
+        public_symbol: String,
+        /// Target-visible API name referenced by the contract test.
+        #[arg(long)]
+        target_alias: String,
+        /// Existing independent target-owned tests/<name>.rs contract.
+        #[arg(long)]
+        contract_test: PathBuf,
+        /// Pre-provisioned Cargo registry; mounted read-only inside Docker.
+        #[arg(long)]
+        registry_cache: PathBuf,
+        /// Human-reviewed public upstream GitHub repository URL (provenance claim).
+        #[arg(long)]
+        upstream_repository: String,
+        /// Human-reviewed 40-character commit SHA (not proven to match crate artifact).
+        #[arg(long)]
+        upstream_commit: String,
+        /// Confirm independent license/source review; not legal clearance.
+        #[arg(long)]
+        license_reviewed: bool,
     },
     /// Verify 2-5 distinct Rust Feature Capsules in sequence, with rollback on any failure.
     VerifyRustBatch {
@@ -325,6 +361,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 api_signatures,
                 reviewed_api_rule,
                 contract_test,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::VerifyExternalRustCrate {
+            target, output, package, version, public_symbol, target_alias,
+            contract_test, registry_cache, upstream_repository, upstream_commit,
+            license_reviewed,
+        } => {
+            let result = verify_upstream_crate(&UpstreamCrateOptions {
+                target_root: target,
+                output_root: output,
+                package,
+                version,
+                public_symbol,
+                target_alias,
+                contract_test,
+                registry_cache,
+                upstream_repository,
+                upstream_commit,
+                license_reviewed,
             })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
