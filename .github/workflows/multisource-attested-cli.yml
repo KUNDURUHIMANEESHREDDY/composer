@@ -1,0 +1,123 @@
+name: Multi-upstream Git acceptance and attested Windows portable CLI
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/multisource-attested-cli.yml
+      - tests/test_multisource_git_only_public.py
+      - crates/integration/**
+      - apps/cli/**
+      - Cargo.lock
+  push:
+    branches:
+      - feat/multisource-attested-windows-cli
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-unpublished-sources:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Prepare existing offline verifier
+        run: docker pull rust:1.99-slim
+      - name: Verify 3 existing upstream implementations across 2 Git-only repositories and 2 targets
+        run: python3 -u tests/test_multisource_git_only_public.py
+
+  windows-build-attest:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native Rust compiler
+        uses: dtolnay/rust-toolchain@stable
+      - name: Validate committed lockfile and formatting
+        shell: pwsh
+        run: |
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Committed lockfile cannot resolve" }
+          cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw "Rust format check failed" }
+      - name: Test native Windows workspace using committed lockfile
+        run: cargo test --workspace --all-targets --locked
+      - name: Compile portable release CLI from locked source
+        run: cargo build -p composer-cli --release --locked
+      - name: Bundle existing CLI as portable Windows ZIP with executable checksum
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/composer-windows-x64 | Out-Null
+          Copy-Item target/release/composer.exe dist/composer-windows-x64/composer.exe
+          $version = & dist/composer-windows-x64/composer.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "Packaged CLI failed to start" }
+          Set-Content dist/composer-windows-x64/BUILD-INFO.txt -Value @(
+            "Artifact: Composer portable Windows x64 CLI",
+            "Version: $version",
+            "Commit: $env:GITHUB_SHA",
+            "Rust: $(rustc --version)",
+            "Source: $env:GITHUB_REPOSITORY",
+            "Portable ZIP only; this is not an MSI or an installed application."
+          )
+          $digest = (Get-FileHash dist/composer-windows-x64/composer.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content dist/composer-windows-x64/composer.exe.sha256 -Value $digest
+          Compress-Archive -Path dist/composer-windows-x64 -DestinationPath dist/composer-windows-x64.zip -Force
+          if (-not (Test-Path dist/composer-windows-x64.zip)) { throw "ZIP missing" }
+          Write-Output "PASS native release executable and portable archive"
+      - name: GitHub Sigstore-backed build artifact attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/composer-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: composer-windows-x64-portable
+          path: dist/composer-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-fresh-extract-smoke:
+    needs: windows-build-attest
+    runs-on: windows-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: composer-windows-x64-portable
+          path: input
+      - name: Attestation, SHA256 and extracted CLI on separate clean Windows runner
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = Join-Path $PWD "input/composer-windows-x64.zip"
+          if (-not (Test-Path $zip)) { throw "Missing ZIP" }
+          gh attestation verify $zip --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw "GitHub attestation failed" }
+          Expand-Archive -Path $zip -DestinationPath extracted
+          $folder = Join-Path $PWD "extracted/composer-windows-x64"
+          $exe = Join-Path $folder "composer.exe"
+          if (-not (Test-Path $exe)) { throw "Missing extracted CLI" }
+          $expected = (Get-Content (Join-Path $folder "composer.exe.sha256") -Raw).Trim().ToLowerInvariant()
+          $actual = (Get-FileHash -Path $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw "Executable digest mismatch" }
+          & $exe --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "CLI --help failed" }
+          & $exe --version | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "CLI --version failed" }
+          foreach ($cmd in @("discover-external-rust", "verify-external-git-rust", "recover-external-rust-crate")) {
+            & $exe $cmd --help | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Missing CLI command $cmd" }
+          }
+          Write-Output "PASS clean Windows extraction, attestation, checksum and CLI commands"
