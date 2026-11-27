@@ -26,7 +26,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Prepare existing offline verifier
         run: docker pull rust:1.99-slim
-      - name: Verify 3 existing upstream implementations across 2 Git-only repositories and 2 targets
+      - name: Verify 3 existing upstream implementations across 2 Git-only repositories and one verified target
         run: python3 -u tests/test_multisource_git_only_public.py
 
   windows-build-attest:
