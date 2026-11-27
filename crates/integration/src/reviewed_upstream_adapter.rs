@@ -91,6 +91,10 @@ mod tests {
                 "{invalid}"
             );
         }
-        assert!(reviewed_string_adapter("a", "b", "c", None).unwrap().is_none());
+        assert!(
+            reviewed_string_adapter("a", "b", "c", None)
+                .unwrap()
+                .is_none()
+        );
     }
 }
