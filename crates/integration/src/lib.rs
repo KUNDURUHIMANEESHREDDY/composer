@@ -11,6 +11,7 @@ mod external_discovery;
 mod multifile;
 mod reviewed;
 mod upstream_crate;
+mod upstream_git;
 mod upstream_recovery;
 mod verified;
 mod verify;
@@ -36,6 +37,7 @@ pub use dependencies::{
 pub use external_discovery::{
     ExternalDiscoveryOptions, ExternalDiscoveryResult, discover_external_rust,
 };
+pub use upstream_git::{UpstreamGitOptions, UpstreamGitResult, verify_upstream_git};
 pub use upstream_crate::{UpstreamCrateOptions, UpstreamCrateResult, verify_upstream_crate};
 pub use upstream_recovery::{
     UpstreamRecoveryAttempt, UpstreamRecoveryCandidate, UpstreamRecoveryOptions,
