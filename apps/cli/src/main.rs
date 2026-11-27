@@ -143,6 +143,12 @@ enum Command {
         /// Repeat source::fn=target_fn(u16)->u64; only infallible Into wrappers.
         #[arg(long = "api-signature")]
         api_signatures: Vec<String>,
+        /// Exact suggestion manually reviewed from suggest-rust-api output.
+        #[arg(long = "reviewed-api-rule")]
+        reviewed_api_rule: Option<String>,
+        /// Pre-existing independent test that calls the target stub.
+        #[arg(long = "contract-test")]
+        contract_test: Option<PathBuf>,
     },
     /// Verify 2-5 distinct Rust Feature Capsules in sequence, with rollback on any failure.
     VerifyRustBatch {
@@ -306,6 +312,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             registry_cache,
             api_aliases,
             api_signatures,
+            reviewed_api_rule,
+            contract_test,
         } => {
             let result = compose_verified_rust(&VerifiedRustOptions {
                 capsule_root: capsule,
@@ -315,6 +323,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 registry_cache,
                 api_aliases,
                 api_signatures,
+                reviewed_api_rule,
+                contract_test,
             })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }

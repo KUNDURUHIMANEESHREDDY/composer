@@ -13,14 +13,14 @@ const MAX_PARAMETERS: usize = 4;
 const MAX_RULE_BYTES: usize = 200;
 
 #[derive(Debug, PartialEq, Eq)]
-struct Signature {
-    source: String,
-    name: String,
-    parameters: Vec<String>,
-    result: String,
+pub(crate) struct Signature {
+    pub(crate) source: String,
+    pub(crate) name: String,
+    pub(crate) parameters: Vec<String>,
+    pub(crate) result: String,
 }
 
-fn identifier(s: &str) -> bool {
+pub(crate) fn identifier(s: &str) -> bool {
     let b = s.as_bytes();
     !b.is_empty()
         && (b[0].is_ascii_alphabetic() || b[0] == b'_')
@@ -51,7 +51,7 @@ fn allowed_type(s: &str, is_result: bool) -> bool {
         || (is_result && s == "()")
 }
 
-fn parse_rule(input: &str) -> Result<Signature, VerifiedRustError> {
+pub(crate) fn parse_rule(input: &str) -> Result<Signature, VerifiedRustError> {
     let bad = || {
         VerifiedRustError::Unsafe(format!(
             "unsupported API signature: {input}; expected source::item=public_fn(u16)->u64"
