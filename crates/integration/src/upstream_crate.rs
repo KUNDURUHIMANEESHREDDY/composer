@@ -171,10 +171,8 @@ fn reviewed_owned_string_adapter(
             "reviewed external target signature exceeds 180 bytes".into(),
         ));
     }
-    let parsed = crate::api_signature::parse_rule(&format!(
-        "{}={signature}",
-        options.public_symbol
-    ))?;
+    let parsed =
+        crate::api_signature::parse_rule(&format!("{}={signature}", options.public_symbol))?;
     if parsed.name != options.target_alias
         || parsed.source != options.public_symbol
         || parsed.parameters.is_empty()
@@ -479,7 +477,10 @@ mod tests {
                 target_signature: Some(invalid.into()),
                 ..options.clone()
             };
-            assert!(reviewed_owned_string_adapter(&proposal).is_err(), "{invalid}");
+            assert!(
+                reviewed_owned_string_adapter(&proposal).is_err(),
+                "{invalid}"
+            );
         }
         let unchanged = UpstreamCrateOptions {
             target_signature: None,
