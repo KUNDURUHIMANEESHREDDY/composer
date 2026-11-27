@@ -207,11 +207,20 @@ fn contains_disabling_attributes(node: tree_sitter::Node<'_>, code: &str) -> boo
 // must not make a vacuous assertion look like a behavioral contract. This
 // deliberately rejects more complex expressions pending manual review.
 fn has_target_assertion(node: tree_sitter::Node<'_>, code: &str, function: &str) -> bool {
-    // An uncalled helper, closure, or async block is not proof that an
-    // assertion runs under the integration-test harness.
+    // A nested assertion may never execute (uncalled helper, conditional
+    // branch or empty loop). Demand at least one simple unconditional
+    // assertion instead; more complex test structure needs manual review.
     if matches!(
         node.kind(),
-        "closure_expression" | "function_item" | "async_block" | "async_block_expression"
+        "closure_expression"
+            | "function_item"
+            | "async_block"
+            | "async_block_expression"
+            | "if_expression"
+            | "match_expression"
+            | "for_expression"
+            | "while_expression"
+            | "loop_expression"
     ) {
         return false;
     }
@@ -442,6 +451,10 @@ mod tests {
             "#[test] fn unrelated() { assert_eq!(wanted (1), wanted (1)); }",
             "#[test] fn unrelated() { let unused = || assert_eq!(wanted(1), 2); }",
             "#[test] fn unrelated() { fn unused() { assert_eq!(wanted(1), 2); } }",
+            "#[test] fn unrelated() { if false { assert_eq!(wanted(1), 2); } }",
+            "#[test] fn unrelated() { for _ in 0..0 { assert_eq!(wanted(1), 2); } }",
+            "#[test] fn unrelated() { while false { assert_eq!(wanted(1), 2); } }",
+            "#[test] fn unrelated() { match 0 { 1 => assert_eq!(wanted(1), 2), _ => {} } }",
             "#[test] #[should_panic] fn check() { assert_eq!(wanted(1), 2); }",
             "#[test] #[cfg(any())] fn check() { assert_eq!(wanted(1), 2); }",
             "#[ignore] #[test] fn check() { assert_eq!(wanted(1), 2); }",

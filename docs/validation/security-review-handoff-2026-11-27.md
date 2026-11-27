@@ -12,7 +12,7 @@ Status: **NOT independently audited or approved.** This is a review request, not
 ## Changes requiring review
 1. Type-compatible name-unrelated functions can be shown as **score-10 suggestions** only. They cannot be auto-selected; an explicit current-rule match plus isolated compiler and independent contract tests are still mandatory.
 2. Cargo manifest test overrides are now refused for reviewed contracts, including custom test targets whose harness could be disabled or whose required-features could skip testing.
-3. The contract-test scanner now demands a directly called target as the first assertion argument and rejects known spoofing patterns including nested macros, uncalled closures and direct function-to-itself comparisons.
+3. The contract-test scanner now demands a directly called target as the first assertion argument and rejects known spoofing patterns including nested macros, uncalled closures, branch-guarded assertions, empty loops and direct function-to-itself comparisons. This remains a syntactic admission screen, not independent proof of every test's execution.
 
 ## Required external verification
 - [ ] Clean pinned-commit formatting, Clippy and workspace tests.
