@@ -97,19 +97,143 @@ fn validate_contract_test(
         ));
     }
     let code = fs::read_to_string(path)?;
-    // An admission precheck, not a claim of complete coverage: Docker
-    // runs Cargo tests and the reviewed caller must confirm meaningful
-    // independent assertions. Never synthesize an acceptance test here.
-    if !code.contains("#[test]")
-        || !code.contains(&format!("{function}("))
-        || !code.contains("assert")
-        || code.contains("#[ignore]")
-    {
+    // Parse test syntax, rather than accepting tokens embedded in comments
+    // or string literals. This is still an admission check, not proof of
+    // semantic correctness; callers must independently review assertions.
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_rust::LANGUAGE.into())
+        .map_err(|err| VerifiedRustError::Unsafe(format!("Rust test parser: {err}")))?;
+    let tree = parser
+        .parse(&code, None)
+        .ok_or_else(|| VerifiedRustError::Unsafe("contract test could not be parsed".into()))?;
+    if tree.root_node().has_error() {
         return Err(VerifiedRustError::Unsafe(
-            "contract test must include active #[test], target call and assertion".into(),
+            "contract test has invalid Rust syntax".into(),
+        ));
+    }
+    if contains_disabling_attributes(tree.root_node(), &code) {
+        return Err(VerifiedRustError::Unsafe(
+            "conditional, ignored or expected-panic test attributes are not permitted".into(),
+        ));
+    }
+    let mut attrs = Vec::new();
+    let mut valid_test = false;
+    let mut cursor = tree.root_node().walk();
+    for item in tree.root_node().named_children(&mut cursor) {
+        if item.kind() == "attribute_item" {
+            let attr = item
+                .utf8_text(code.as_bytes())
+                .map_err(|_| VerifiedRustError::Unsafe("invalid test attribute".into()))?;
+            let compact = attr
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>();
+            attrs.push(compact);
+            continue;
+        }
+        if item.kind() == "inner_attribute_item" {
+            return Err(VerifiedRustError::Unsafe(
+                "crate-level attributes in contract tests require manual review".into(),
+            ));
+        }
+        if item.kind() == "function_item"
+            && attrs.iter().any(|a| a == "#[test]")
+            && item
+                .child_by_field_name("body")
+                .is_some_and(|body| has_target_assertion(body, &code, function))
+        {
+            valid_test = true;
+        }
+        attrs.clear();
+    }
+    if !valid_test {
+        return Err(VerifiedRustError::Unsafe(
+            "contract test must have an active top-level #[test] with an assertion invoking the target API".into(),
         ));
     }
     Ok(())
+}
+
+fn contains_disabling_attributes(node: tree_sitter::Node<'_>, code: &str) -> bool {
+    if matches!(node.kind(), "attribute_item" | "inner_attribute_item") {
+        let compact = node
+            .utf8_text(code.as_bytes())
+            .unwrap_or("")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>();
+        if [
+            "#[ignore",
+            "#[cfg(",
+            "#[cfg_attr(",
+            "#[should_panic",
+            "#![cfg(",
+            "#![cfg_attr(",
+        ]
+        .iter()
+        .any(|prefix| compact.starts_with(prefix))
+        {
+            return true;
+        }
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .any(|child| contains_disabling_attributes(child, code))
+}
+
+// Tree-sitter recognizes macro token trees as structured syntax: a target
+// identifier followed by a parenthesized token tree represents a call in
+// assert!(...), assert_eq!(...) or assert_ne!(...). No comment or literal
+// string can satisfy this check.
+fn has_target_assertion(node: tree_sitter::Node<'_>, code: &str, function: &str) -> bool {
+    if node.kind() == "macro_invocation" {
+        let macro_name = node
+            .child_by_field_name("macro")
+            .and_then(|name| name.utf8_text(code.as_bytes()).ok());
+        if matches!(macro_name, Some("assert" | "assert_eq" | "assert_ne"))
+            && contains_target_call(node, code, function)
+        {
+            return true;
+        }
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .any(|child| has_target_assertion(child, code, function))
+}
+
+fn contains_target_call(node: tree_sitter::Node<'_>, code: &str, function: &str) -> bool {
+    if node.kind() == "call_expression"
+        && node
+            .child_by_field_name("function")
+            .and_then(|f| f.utf8_text(code.as_bytes()).ok())
+            .is_some_and(|name| name.rsplit("::").next() == Some(function))
+    {
+        return true;
+    }
+    let mut cursor = node.walk();
+    let children = node.named_children(&mut cursor).collect::<Vec<_>>();
+    if node.kind() == "token_tree"
+        && children.windows(2).any(|pair| {
+            pair[0].kind() == "identifier"
+                && pair[0].utf8_text(code.as_bytes()).ok() == Some(function)
+                && pair[1].kind() == "token_tree"
+                && code[..pair[0].start_byte()]
+                    .bytes()
+                    .rev()
+                    .find(|byte| !byte.is_ascii_whitespace())
+                    != Some(b'.')
+                && pair[1]
+                    .utf8_text(code.as_bytes())
+                    .ok()
+                    .is_some_and(|text| text.starts_with('('))
+        })
+    {
+        return true;
+    }
+    children
+        .into_iter()
+        .any(|child| contains_target_call(child, code, function))
 }
 
 /// Replace ONLY the body of a plain top-level public function that is still
@@ -270,6 +394,49 @@ mod tests {
             apply_reviewed_api(&root, "composer_math", "euler_totient=wanted(u32)->u128").is_err()
         );
         assert_eq!(fs::read_to_string(&file).unwrap(), snapshot);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_contract_spoofing_and_nonexecuting_attributes() {
+        let root = std::env::temp_dir().join(format!("composer-contract-ast-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("tests")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='demo'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        let test = root.join("tests/reviewed.rs");
+        let valid = "#[test] fn checks() { assert_eq!(wanted(1), 2); }";
+        for accepted in [
+            valid,
+            "#[test] fn checks() { assert!(wanted(1)); }",
+            "#[test] fn checks() { assert_ne!(wanted(1), 0); }",
+            "#[test] fn checks() { assert_eq!(crate::wanted(1), 2); }",
+        ] {
+            fs::write(&test, accepted).unwrap();
+            assert!(
+                validate_contract_test(&root, Path::new("tests/reviewed.rs"), "wanted").is_ok(),
+                "valid checked expression rejected: {accepted}"
+            );
+        }
+        for bogus in [
+            "/* #[test] wanted(1) assert */ fn unrelated() {}",
+            "#[test] fn unrelated() { let text = \"wanted(1)\"; assert_eq!(1, 1); }",
+            "#[test] fn unrelated() { assert_eq!(1, 1); } // wanted(1)",
+            "#[test] fn unrelated() { let _ = wanted(1); assert_eq!(1, 1); }",
+            "#[test] fn unrelated() { assert_eq!(other.wanted(1), 2); }",
+            "#[test] #[should_panic] fn check() { assert_eq!(wanted(1), 2); }",
+            "#[test] #[cfg(any())] fn check() { assert_eq!(wanted(1), 2); }",
+            "#[ignore] #[test] fn check() { assert_eq!(wanted(1), 2); }",
+            "#[test] fn check() { #[cfg(any())] assert_eq!(wanted(1), 2); }",
+        ] {
+            fs::write(&test, bogus).unwrap();
+            assert!(
+                validate_contract_test(&root, Path::new("tests/reviewed.rs"), "wanted").is_err(),
+                "incorrectly admitted: {bogus}"
+            );
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
