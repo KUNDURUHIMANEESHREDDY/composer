@@ -4,8 +4,9 @@ use clap::{Parser, Subcommand};
 use composer_core::ProjectSpec;
 use composer_integration::{
     BatchRustOptions, IntegrationOptions, RustWiringOptions, UpstreamCrateOptions,
-    VerifiedRustOptions, apply_integration, compose_verified_rust, compose_verified_rust_batch,
-    discover_rust_api_contracts, plan_integration, verify_capsule, verify_upstream_crate,
+    UpstreamRecoveryCandidate, UpstreamRecoveryOptions, VerifiedRustOptions, apply_integration,
+    compose_verified_rust, compose_verified_rust_batch, discover_rust_api_contracts,
+    plan_integration, recover_upstream_crate, verify_capsule, verify_upstream_crate,
     wire_rust_module,
 };
 use composer_intelligence::{
@@ -184,6 +185,31 @@ enum Command {
         #[arg(long)]
         upstream_commit: String,
         /// Confirm independent license/source review; not legal clearance.
+        #[arg(long)]
+        license_reviewed: bool,
+    },
+    /// Try 1-5 reviewed external package candidates in preference order.
+    /// Resolves cached semver versions, falls back after incorrect behavior,
+    /// and isolates existing dependency conflicts under Cargo aliases.
+    RecoverExternalRustCrate {
+        /// Original target Cargo project. Never modified.
+        target: PathBuf,
+        /// New verified output directory.
+        #[arg(long)]
+        output: PathBuf,
+        /// JSON array of reviewed external package candidates.
+        #[arg(long)]
+        candidates_json: PathBuf,
+        /// Target-visible function that the behavioral contract exercises.
+        #[arg(long)]
+        target_alias: String,
+        /// Existing independent target-owned test in tests/<name>.rs.
+        #[arg(long)]
+        contract_test: PathBuf,
+        /// Pre-populated crates.io registry cache, never fetched by Composer.
+        #[arg(long)]
+        registry_cache: PathBuf,
+        /// Confirm independent license/source review for all candidates.
         #[arg(long)]
         license_reviewed: bool,
     },
@@ -392,6 +418,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 license_reviewed,
             })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::RecoverExternalRustCrate {
+            target,
+            output,
+            candidates_json,
+            target_alias,
+            contract_test,
+            registry_cache,
+            license_reviewed,
+        } => {
+            let metadata = fs::symlink_metadata(&candidates_json)?;
+            if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 64 * 1024 {
+                return Err("candidate list must be a regular JSON file no larger than 64 KiB".into());
+            }
+            let candidates: Vec<UpstreamRecoveryCandidate> =
+                serde_json::from_slice(&fs::read(candidates_json)?)?;
+            let report = recover_upstream_crate(&UpstreamRecoveryOptions {
+                target_root: target,
+                output_root: output,
+                target_alias,
+                contract_test,
+                registry_cache,
+                candidates,
+                license_reviewed,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::VerifyRustBatch {
             capsules,
