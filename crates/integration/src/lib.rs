@@ -10,6 +10,7 @@ mod dependencies;
 mod multifile;
 mod reviewed;
 mod verified;
+mod upstream_crate;
 mod verify;
 mod wire;
 
@@ -30,6 +31,7 @@ pub use dependencies::{
     DependencyEcosystem, DependencyInventory, DependencyKind, DependencyRequirement,
     LicenseDeclaration, RequirementStatus,
 };
+pub use upstream_crate::{UpstreamCrateOptions, UpstreamCrateResult, verify_upstream_crate};
 pub use verified::{
     VerifiedRustError, VerifiedRustOptions, VerifiedRustResult, compose_verified_rust,
 };
