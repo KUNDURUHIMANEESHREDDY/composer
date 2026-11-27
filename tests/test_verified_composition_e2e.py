@@ -177,6 +177,79 @@ def verify_nested_modules(root: Path, target: Path) -> None:
     ] == ["math::double=adapted_scale(u16)->u64"]
     print("PASS compiler-inferred API signature: u16 to u32 input, u32 to u64 output")
 
+    # Connect the read-only recommender to the *existing* verifier only
+    # after explicit confirmation of the exact current rule and an existing
+    # independent behavioral contract test. Replace the placeholder body,
+    # never add a duplicate function declaration.
+    target_reviewed = root / "target-reviewed-suggestion"
+    shutil.copytree(target, target_reviewed)
+    reviewed_lib = target_reviewed / "src/lib.rs"
+    reviewed_lib.write_text(
+        reviewed_lib.read_text() +
+        "\npub fn adapted_double(n: u16) -> u64 { todo!() }\n",
+        encoding="utf-8",
+    )
+    (target_reviewed / "tests").mkdir()
+    (target_reviewed / "tests/reviewed_contract.rs").write_text(
+        "use composed_target::adapted_double;\n"
+        "#[test] fn checks_reviewed_mapping() {\n"
+        "    assert_eq!(adapted_double(21_u16), 42_u64);\n"
+        "    assert_eq!(adapted_double(4_u16), 8_u64);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    original_reviewed = reviewed_lib.read_bytes()
+    proposed = json.loads(cli(
+        "suggest-rust-api", str(capsule), str(target_reviewed),
+    ))
+    candidates = [item for item in proposed["requirements"]
+                  if item["target_function"] == "adapted_double"]
+    assert len(candidates) == 1
+    reviewed_rule = candidates[0]["best_suggestion"]["suggested_cli_rule"]
+    assert reviewed_rule == "math::double=adapted_double(u16)->u64"
+
+    verified_reviewed = root / "verified-reviewed-suggestion"
+    reviewed_result = json.loads(cli(
+        "verify-rust", str(capsule), str(target_reviewed),
+        "--output", str(verified_reviewed), "--license-reviewed",
+        "--registry-cache", str(CARGO_CACHE),
+        "--reviewed-api-rule", reviewed_rule,
+        "--contract-test", "tests/reviewed_contract.rs",
+    ))
+    assert reviewed_result["isolated_tests_passed"] is True
+    assert reviewed_result["reviewed_api_rule"] == reviewed_rule
+    assert reviewed_result["reviewed_contract_test"] == "tests/reviewed_contract.rs"
+    output_lib = (verified_reviewed / "src/lib.rs").read_text()
+    assert output_lib.count("pub fn adapted_double") == 1
+    assert "crate::composer_nested_calculator::math::double" in output_lib
+    assert "pub fn adapted_double(n: u16) -> u64 { todo!() }" not in output_lib
+    assert reviewed_lib.read_bytes() == original_reviewed
+    evidence = json.loads((verified_reviewed / "composer-build-evidence.json").read_text())
+    assert evidence["reviewed_api_rule"] == reviewed_rule
+    assert evidence["reviewed_contract_test"] == "tests/reviewed_contract.rs"
+    print("PASS reviewed suggestion -> existing stub -> target contract -> Docker tests")
+
+    for index, (flags, reason) in enumerate([
+        (["--reviewed-api-rule", "math::double=adapted_double(u32)->u64",
+          "--contract-test", "tests/reviewed_contract.rs"], "stale rule"),
+        (["--reviewed-api-rule", reviewed_rule], "missing test declaration"),
+        (["--reviewed-api-rule", reviewed_rule,
+          "--contract-test", "../reviewed_contract.rs"], "traversal"),
+        (["--reviewed-api-rule", reviewed_rule,
+          "--contract-test", "tests/reviewed_contract.rs",
+          "--api-alias", "math::double=other"], "mixed modes"),
+    ]):
+        output = root / f"reviewed-must-reject-{index}"
+        cli(
+            "verify-rust", str(capsule), str(target_reviewed),
+            "--output", str(output), "--license-reviewed",
+            "--registry-cache", str(CARGO_CACHE),
+            *flags, expect_success=False,
+        )
+        assert not output.exists(), f"{reason}: invalid reviewed integration published"
+        assert reviewed_lib.read_bytes() == original_reviewed
+    print("PASS reviewed mapping refused stale rules, missing tests, traversal and mixed modes")
+
     bad_signature = root / "must-reject-incompatible-signature"
     cli(
         "verify-rust", str(capsule), str(target),
