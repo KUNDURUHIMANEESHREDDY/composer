@@ -24,7 +24,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Run pinned official OpenSSF Scorecard
-        uses: ossf/scorecard-action@56eaeac26fc540dfface1f07f79b9426f1956b4d
+        uses: ossf/scorecard-action@23f22cd43608bae7a1f1fa2603d7314dee9538a5
         with:
           results_file: scorecard-results.sarif
           results_format: sarif

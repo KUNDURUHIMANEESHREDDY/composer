@@ -29,7 +29,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Enforce upstream cargo-deny license, source and dependency rules
-        uses: EmbarkStudios/cargo-deny-action@2739ab21c6af9681b483ae4fe5f3d56604407b2b
+        uses: EmbarkStudios/cargo-deny-action@bb119f768ea239e765aeaef5769558d4f21213aa
         with:
           command: check bans licenses sources
           arguments: --all-features
@@ -40,7 +40,7 @@ jobs:
       actions: read
       contents: read
       security-events: write
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@6bc832ee85d316ab9aeccf71929026841bd0e1ee
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@32d3cd482bdadfb38b186c0ad1b031902d55d932
     with:
       scan-args: |
         -L

@@ -11,9 +11,9 @@ This is a **security hardening candidate**, not a completed independent audit or
 | Syft | Existing SHA-pinned `anchore/sbom-action` | SPDX 2.3 SBOM in Windows portable distribution |
 | GitHub artifact attestation | Existing SHA-pinned `actions/attest`, verified by `gh attestation verify` | Distribution provenance; not publisher identity verification |
 | CodeQL | `github/codeql-action` at `bf58c2ac1f8060aa73f1225f461c80391348076a` | Rust `security-extended` without running untrusted Cargo build scripts |
-| cargo-deny | `EmbarkStudios/cargo-deny-action` at `2739ab21c6af9681b483ae4fe5f3d56604407b2b` | Banned dependencies, license expressions, registry/Git source policies |
-| OSV-Scanner | Official reusable workflow at `6bc832ee85d316ab9aeccf71929026841bd0e1ee` | Vulnerability scan of Composer's Cargo.lock; fail if vulnerabilities or scanner errors |
-| OpenSSF Scorecard | `ossf/scorecard-action` at `56eaeac26fc540dfface1f07f79b9426f1956b4d` | Repository health/trust evidence; does not authorize any upstream source automatically |
+| cargo-deny | `EmbarkStudios/cargo-deny-action` at `bb119f768ea239e765aeaef5769558d4f21213aa` | Banned dependencies, license expressions, registry/Git source policies |
+| OSV-Scanner | Official reusable workflow at `32d3cd482bdadfb38b186c0ad1b031902d55d932` | Vulnerability scan of Composer's Cargo.lock; fail if vulnerabilities or scanner errors |
+| OpenSSF Scorecard | `ossf/scorecard-action` at `23f22cd43608bae7a1f1fa2603d7314dee9538a5` | Repository health/trust evidence; does not authorize any upstream source automatically |
 
 The added actions and reusable workflow are pinned to their reviewed Git revisions. **That does not prove their bundled Docker images and transient dependencies are immutable.** Review the OSV image and cargo-deny action image supply chain separately. The new scanners run on GitHub-hosted CI and are limited to same-repository PRs for write-capable operations. These are monitoring and admission checks, not a substitute for runtime containment.
 
