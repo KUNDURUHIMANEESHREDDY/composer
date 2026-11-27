@@ -475,6 +475,7 @@ mod tests {
             package: "strsim".into(),
             public_symbol: "jaro".into(),
             target_alias: "ported_jaro".into(),
+            target_signature: None,
             contract_test: PathBuf::from("tests/contract.rs"),
             registry_cache: PathBuf::from("missing-registry"),
             git_cache: PathBuf::from("missing-git"),
