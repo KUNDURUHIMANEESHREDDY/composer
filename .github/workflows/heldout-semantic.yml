@@ -1,0 +1,34 @@
+name: Held-out Rust semantic integration acceptance
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/heldout-semantic.yml
+      - tests/test_heldout_semantic_benchmark.py
+      - crates/integration/**
+      - apps/cli/**
+  push:
+    branches:
+      - feat/heldout-semantic-benchmark
+    paths:
+      - .github/workflows/heldout-semantic.yml
+      - tests/test_heldout_semantic_benchmark.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  heldout-semantic:
+    # Do not run untrusted fork PR code with the Docker verifier.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust and Python
+        uses: dtolnay/rust-toolchain@stable
+      - name: Prepare pinned offline verifier image
+        run: docker pull rust:1.99-slim
+      - name: Execute held-out public integration and negative controls
+        run: python3 -u tests/test_heldout_semantic_benchmark.py
