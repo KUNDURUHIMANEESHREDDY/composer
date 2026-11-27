@@ -21,7 +21,7 @@ composer-core = { path = "crates/core", version = "0.1.0" }
 composer-repository = { path = "crates/repository", version = "0.1.0" }
 composer-intelligence = { path = "crates/intelligence", version = "0.1.0" }
 composer-integration = { path = "crates/integration", version = "0.1.0" }
-toml = "0.8"
+toml = "1.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
