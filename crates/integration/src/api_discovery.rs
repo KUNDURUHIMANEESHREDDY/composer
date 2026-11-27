@@ -253,7 +253,10 @@ fn parse_function(node: Node<'_>, source: &str, file: &Path, module: &str) -> Op
     if !param_text.trim().is_empty() {
         for param in param_text.split(',') {
             let (variable, ty) = param.trim().split_once(':')?;
-            if !identifier(variable.trim()) || !allowed_type(ty.trim()) {
+            // Mutation of a local binding does not change the public type.
+            // Accept only a simple optional `mut` prefix, never destructuring.
+            let binding = variable.trim().strip_prefix("mut ").unwrap_or(variable.trim());
+            if !identifier(binding) || !allowed_type(ty.trim()) {
                 return None;
             }
             params.push(ty.trim().to_owned());
@@ -444,6 +447,12 @@ pub async fn delayed(x: u32) -> u32 { todo!() }
 "#;
         let functions = scan_public_functions(code, Path::new("src/lib.rs"), "");
         assert_eq!(functions.len(), 3);
+        let mutable = scan_public_functions(
+            "pub fn fast_gcd(mut a: i64, mut b: i64) -> i64 { a + b }",
+            Path::new("src/math.rs"), ""
+        );
+        assert_eq!(mutable.len(), 1);
+        assert_eq!(mutable[0].parameters, vec!["i64", "i64"]);
         assert!(functions[0].body_is_unimplemented);
         assert!(!functions[1].body_is_unimplemented);
         assert!(functions[2].body_is_unimplemented);
