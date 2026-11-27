@@ -15,7 +15,7 @@ use tree_sitter::{Node, Parser, Tree};
 use crate::verify::{VerificationError, verify_capsule};
 
 const MAX_TARGET_BYTES: u64 = 1024 * 1024;
-const MAX_CANDIDATES: usize = 5;
+const MAX_CANDIDATES: usize = 16;
 const MAX_INPUT_FUNCTIONS: usize = 256;
 const MAX_SOURCE_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -167,7 +167,12 @@ pub fn discover_rust_api_contracts(
                 source_return_type: source.result.clone(),
                 suggested_cli_rule: rule,
                 ranking_score: ranking,
-                rationale: "Name-token overlap and only fixed-width, infallible primitive widening/identity; does not prove semantic equivalence".into(),
+                rationale: if ranking < 45 {
+                    "Type-compatible but no name similarity; for explicit human review only. This is NOT a semantic match or proof of equivalence."
+                } else {
+                    "Name-token overlap and only fixed-width, infallible primitive widening/identity; does not prove semantic equivalence."
+                }
+                .into(),
             });
         }
         candidates.sort_by(|a, b| {
@@ -188,8 +193,10 @@ pub fn discover_rust_api_contracts(
             "candidate_requires_independent_review_and_compiler_verification"
         } else if ambiguous {
             "ambiguous_candidates_no_automatic_selection"
+        } else if !candidates.is_empty() {
+            "review_required_no_automatic_selection"
         } else {
-            "no_supported_unambiguous_candidate"
+            "no_type_compatible_candidate"
         };
         results.push(RustTargetRequirement {
             target_function: target.name,
@@ -207,7 +214,7 @@ pub fn discover_rust_api_contracts(
         source_functions_inspected: source_functions.len(),
         target_stubs_inspected: results.len(),
         requirements: results,
-        warning: "Read-only heuristic recommendations; no code generated or verified. Names alone never establish behavior. Review each contract and require independent Cargo compilation and behavioral tests before publication.".into(),
+        warning: "Read-only, bounded type-shape and name heuristic suggestions; no code generated or verified. Low-score suggestions are NOT semantic matches and require explicit human selection. Every accepted mapping requires independent Cargo compilation and behavioral tests; passing tests covers only those cases.".into(),
     })
 }
 
@@ -506,7 +513,9 @@ fn rank_candidate(target: &ApiFunction, source: &ApiFunction) -> Option<u32> {
         return None;
     }
     let score = name_score(&source.name, &target.name);
-    (score >= 45).then_some(score)
+    // Also surface type-compatible but name-unrelated APIs for explicit review.
+    // A score of 10 can NEVER become a best suggestion (minimum 70).
+    Some(score.max(10))
 }
 
 fn module_path(path: &Path, multifile: bool) -> Option<String> {
@@ -707,7 +716,14 @@ pub async fn delayed(x: u32) -> u32 { todo!() }
                 &mock("distance", &["u32"], "u128"),
                 &mock("totient", &["u64"], "u64")
             ),
-            None
+            Some(10) // surfaced for explicit review, never auto-selected
+        );
+        assert_eq!(
+            rank_candidate(
+                &mock("distance", &["u128"], "u32"),
+                &mock("totient", &["u64"], "u64")
+            ),
+            None // narrowing input cannot be adapted safely
         );
         assert_eq!(name_score("euler_totient", "adapted_totient"), 70);
     }

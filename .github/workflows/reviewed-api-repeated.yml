@@ -5,9 +5,11 @@ on:
   push:
     branches:
       - feat/reviewed-api-verified-execution
+      - feat/semantic-contract-admission
     paths:
       - .github/workflows/reviewed-api-repeated.yml
       - tests/test_reviewed_api_repeated_public.py
+      - tests/reviewed_api_property_vectors.py
       - crates/integration/src/reviewed.rs
       - crates/integration/src/verified.rs
 
@@ -26,5 +28,9 @@ jobs:
         uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Prepare restricted Rust verifier image
         run: bash scripts/prefetch-pinned-rust-verifier.sh
+      - name: Install upstream Hypothesis for deterministic independent property vectors
+        run: |
+          python3 -m venv .composer-contract-venv
+          .composer-contract-venv/bin/pip install --disable-pip-version-check hypothesis==6.170.17
       - name: Verify repeated reviewed API transfers against pinned public targets
-        run: python3 tests/test_reviewed_api_repeated_public.py
+        run: .composer-contract-venv/bin/python tests/test_reviewed_api_repeated_public.py

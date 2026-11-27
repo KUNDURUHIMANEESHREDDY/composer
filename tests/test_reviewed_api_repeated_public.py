@@ -13,6 +13,7 @@ import shutil
 import tempfile
 from time import perf_counter
 
+from reviewed_api_property_vectors import independent_contract
 from test_pinned_public_multifile import (
     CACHE, GEOMETRY_REPO, GEOMETRY_SHA, SOURCE_REPO, SOURCE_SHA,
     cli, clone_exact, make_capsule, prepare_registry, run,
@@ -26,7 +27,7 @@ REPEATS = int(os.environ.get("COMPOSER_REVIEWED_REPEATS", "3"))
 def case(
     root: Path, iteration: int, label: str, source: Path, capsule: Path,
     target: Path, target_package: str, stub: str, contract: str,
-    target_function: str, expected_rule: str,
+    target_function: str, expected_rule: str, oracle_kind: str,
 ) -> dict:
     work = root / f"target-{label}-{iteration}"
     shutil.copytree(target, work, ignore=shutil.ignore_patterns(".git"))
@@ -37,7 +38,8 @@ def case(
     with_stub = library.read_bytes()
     (work / "tests").mkdir(exist_ok=True)
     test = work / "tests/reviewed_contract.rs"
-    test.write_text(contract, encoding="utf-8")
+    extra_contract, vector_count = independent_contract(oracle_kind, target_function)
+    test.write_text(contract + extra_contract, encoding="utf-8")
     original_contract = test.read_bytes()
     begin = perf_counter()
     suggestion = json.loads(cli(
@@ -45,11 +47,21 @@ def case(
     ).stdout)
     matched = [req for req in suggestion["requirements"]
                if req["target_function"] == target_function]
-    assert len(matched) == 1 and matched[0]["best_suggestion"], (
-        label, iteration, matched
-    )
-    exact_rule = matched[0]["best_suggestion"]["suggested_cli_rule"]
-    assert exact_rule == expected_rule, (exact_rule, expected_rule)
+    assert len(matched) == 1, (label, iteration, matched)
+    selected = [candidate for candidate in matched[0]["candidates"]
+                if candidate["suggested_cli_rule"] == expected_rule]
+    assert len(selected) == 1, (label, iteration, matched)
+    if matched[0]["best_suggestion"] is None:
+        # Type-only, unrelated-name candidate: never auto-selected.
+        assert selected[0]["ranking_score"] < 70
+        assert matched[0]["status"] in (
+            "review_required_no_automatic_selection",
+            "ambiguous_candidates_no_automatic_selection",
+        )
+    else:
+        # Name-aligned candidate: still requires manual acceptance and tests.
+        assert matched[0]["best_suggestion"]["suggested_cli_rule"] == expected_rule
+    exact_rule = selected[0]["suggested_cli_rule"]
     discovered_ms = round((perf_counter() - begin) * 1000, 1)
 
     output = root / f"verified-{label}-{iteration}"
@@ -83,7 +95,8 @@ def case(
     assert (output / "src/lib.rs").is_file()
     print(
         f"PASS case={label} repeat={iteration}/{REPEATS} "
-        f"discovery_ms={discovered_ms} verification_s={verify_seconds}",
+        f"discovery_ms={discovered_ms} verification_s={verify_seconds} "
+        f"independent_hypothesis_vectors={vector_count}",
         flush=True,
     )
     return {
@@ -94,6 +107,7 @@ def case(
         "verification_seconds": verify_seconds,
         "offline_compilation_and_contract_tests": True,
         "original_target_unchanged": True,
+        "independent_hypothesis_vectors": vector_count,
     }
 
 
@@ -183,15 +197,16 @@ def main() -> None:
         outcomes = []
         for iteration in range(1, REPEATS + 1):
             outcomes.append(case(
-                root, iteration, "totient-ebtech", algo, totient, ebtech,
+                root, iteration, "renamed-coprime-ebtech", algo, totient, ebtech,
                 "contest_algorithms",
-                "pub fn adapted_totient(n: u32) -> u128 { todo!() }\n",
-                "use contest_algorithms::adapted_totient;\n"
+                "pub fn coprime_count(n: u32) -> u128 { todo!() }\n",
+                "use contest_algorithms::coprime_count;\n"
                 "#[test] fn matches_number_theory_contract() {\n"
-                "assert_eq!(adapted_totient(9_u32), 6_u128);\n"
-                "assert_eq!(adapted_totient(10_u32), 4_u128);\n"
-                "assert_eq!(adapted_totient(13_u32), 12_u128);\n}\n",
-                "adapted_totient", "euler_totient=adapted_totient(u32)->u128",
+                "assert_eq!(coprime_count(9_u32), 6_u128);\n"
+                "assert_eq!(coprime_count(10_u32), 4_u128);\n"
+                "assert_eq!(coprime_count(13_u32), 12_u128);\n}\n",
+                "coprime_count", "euler_totient=coprime_count(u32)->u128",
+                "totient",
             ))
             outcomes.append(case(
                 root, iteration, "cube-rustc-hash", algo, cube, hash_target, "rustc_hash",
@@ -204,15 +219,17 @@ def main() -> None:
                 "assert!(perfect_cube_binary_search_checked(-8_i32));\n}\n",
                 "perfect_cube_binary_search_checked",
                 "perfect_cube_binary_search=perfect_cube_binary_search_checked(i32)->bool",
+                "cube",
             ))
         assert len(outcomes) == 6
         assert all(x["status"] == "verified" for x in outcomes)
+        assert all(x["independent_hypothesis_vectors"] >= 100 for x in outcomes)
         print("EVIDENCE_JSON " + json.dumps({
             "schema_version": 1,
             "total_attempts": len(outcomes),
             "successful_attempts": len(outcomes),
             "cases": outcomes,
-            "limitations": "Two curated source functions from one pinned public source repo, two unrelated existing public targets including no_std crate; contract tests supplied manually; no general reliability inference.",
+            "limitations": "Two curated source functions from one pinned public source repo, two unrelated existing public targets including no_std crate; Hypothesis generates bounded vectors checked against independent mathematical oracles inside Rust tests, no general reliability or universal equivalence inference.",
         }, sort_keys=True), flush=True)
         print("PASS 6/6 reviewed suggestion -> offline Docker compilation -> "
               "independent target contract checks on two existing public targets",

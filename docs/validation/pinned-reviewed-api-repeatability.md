@@ -4,6 +4,8 @@ Measured on GitHub Actions, 2026-11-27. This is contract-directed execution, not
 
 - Successful 6-of-6 benchmark (implementation revision 3b2e13dc): https://github.com/KUNDURUHIMANEESHREDDY/composer/actions/runs/45938463839
 - Repeatability harness: tests/test_reviewed_api_repeated_public.py
+- Expanded acceptance (commit f7abe72): 6/6 hosted Docker transfers passed with 136 independently computed totient and 142 cube test vectors per repeat, generated using upstream Hypothesis 6.170.17: https://github.com/KUNDURUHIMANEESHREDDY/composer/actions/runs/46005058231
+- Limits: vectors were bounded and reproducible; two curated source functions and targets are not an estimate of general semantic compatibility.
 - Source execution confined to Composer's existing restricted network-disabled Docker verifier (rust:1.99-slim). Cargo registry artifacts are prefetched without running third-party build scripts on the host.
 
 ## Pinned repositories
@@ -43,4 +45,4 @@ A proposed EbTech fast_gcd capsule was refused for unresolved import/reference c
 - User-defined target API requirements and independent behavioral assertions, not automatic intent detection or synthetic self-certification.
 - Cargo workspaces, arbitrary dependency graphs, generic/trait/lifetime APIs and cross-language integrations remain unsupported.
 - Restricted Docker does not provide production-grade hostile-code isolation.
-- Native Windows verification of this unmerged branch has not been performed.
+- Native Windows Cargo formatting, strict Clippy and 68/68 workspace tests passed on commit b5c5f0e. Live Windows Docker acceptance was not possible because its engine was unavailable; hosted Linux Docker acceptance passed at f7abe72.
