@@ -40,6 +40,8 @@ pub struct UpstreamGitOptions {
     pub public_symbol: String,
     /// Target-facing name used in target-owned contract tests.
     pub target_alias: String,
+    /// Optional independently reviewed target API signature; typed glue only.
+    pub target_signature: Option<String>,
     pub contract_test: PathBuf,
     pub registry_cache: PathBuf,
     /// Cargo's pre-fetched git/ directory only (never entire Cargo home).
@@ -53,6 +55,7 @@ pub struct UpstreamGitResult {
     pub package: String,
     pub public_symbol: String,
     pub target_alias: String,
+    pub target_signature: Option<String>,
     pub upstream_repository: String,
     pub upstream_commit: String,
     pub lockfile_git_commit_verified: bool,
@@ -277,6 +280,13 @@ pub fn verify_upstream_git(
             "Git SHA, package, public symbol or target alias invalid".into(),
         ));
     }
+    // Reject invalid or unsafe adapter requests before cloning/staging or building.
+    let typed_bridge = crate::reviewed_upstream_adapter::reviewed_string_adapter(
+        &format!("composer_git_{}", options.package.replace('-', "_")),
+        &options.public_symbol,
+        &options.target_alias,
+        options.target_signature.as_deref(),
+    )?;
     let (license, license_sha) =
         checkout_license(&options.upstream_checkout, &options.package, &repo, rev)?;
     let original = options.target_root.canonicalize()?;
@@ -364,11 +374,15 @@ pub fn verify_upstream_git(
                 .map_err(|err| VerifiedRustError::Toml(err.to_string()))?,
         )?;
         let mut library = original_lib.clone();
-        library.push_str(&format!(
-            "\n// Composer: reused pinned upstream Git capability, not regenerated\n\
-             pub use {dependency_key}::{} as {};\n",
-            options.public_symbol, options.target_alias,
-        ));
+        if let Some(adapter) = &typed_bridge {
+            library.push_str(adapter);
+        } else {
+            library.push_str(&format!(
+                "\n// Composer: reused pinned upstream Git capability, not regenerated\n\
+                 pub use {dependency_key}::{} as {};\n",
+                options.public_symbol, options.target_alias,
+            ));
+        }
         fs::write(staged.join("src/lib.rs"), library)?;
         let image_id = inspect_local_image_id()?;
         let container_user = nonroot_container_user()?;
@@ -402,6 +416,8 @@ pub fn verify_upstream_git(
             "target_contract": options.contract_test,
             "public_symbol": options.public_symbol,
             "target_alias": options.target_alias,
+            "target_signature": options.target_signature,
+            "adapter_kind": if typed_bridge.is_some() { "borrow_owned_strings_as_str" } else { "direct_reexport" },
             "offline_tests_passed": true,
             "network_disabled": true,
             "docker_image_id": image_id,
@@ -420,6 +436,7 @@ pub fn verify_upstream_git(
             package: options.package.clone(),
             public_symbol: options.public_symbol.clone(),
             target_alias: options.target_alias.clone(),
+            target_signature: options.target_signature.clone(),
             upstream_repository: repo.clone_url.clone(),
             upstream_commit: rev.clone(),
             lockfile_git_commit_verified: true,
