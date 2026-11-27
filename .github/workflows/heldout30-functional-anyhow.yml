@@ -1,0 +1,42 @@
+name: Held-out functional verification in real unfamiliar Rust target
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/heldout30-functional-anyhow.yml
+      - tests/test_heldout30_functional_anyhow.py
+      - tests/heldout30_pins.json
+      - crates/integration/**
+      - apps/cli/**
+      - Cargo.lock
+
+permissions:
+  contents: read
+
+jobs:
+  behavioral-anyhow:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Prepare existing network-isolated Rust verifier
+        run: docker pull rust:1.99-slim
+      - name: Repeat real pinned Git capability import into held-out anyhow target
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u tests/test_heldout30_functional_anyhow.py 2>&1 | tee heldout30-functional-anyhow.log
+          grep -q 'PASS held-out target dtolnay/anyhow functional trial 3/3' heldout30-functional-anyhow.log
+          grep -q 'PASS wrong-function control rejected, no publication' heldout30-functional-anyhow.log
+          grep -q 'EVIDENCE_JSON ' heldout30-functional-anyhow.log
+      - name: Retain independent behavioral test evidence even on failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
+        with:
+          name: composer-heldout30-anyhow-functional
+          path: heldout30-functional-anyhow.log
+          if-no-files-found: warn
+          retention-days: 14

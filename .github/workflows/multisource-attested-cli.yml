@@ -120,6 +120,12 @@ jobs:
           $folder = Join-Path $PWD "extracted/composer-windows-x64"
           $exe = Join-Path $folder "composer.exe"
           if (-not (Test-Path $exe)) { throw "Missing extracted CLI" }
+          $buildInfo = Join-Path $folder "BUILD-INFO.txt"
+          if (-not (Test-Path $buildInfo)) { throw "Missing signed-archive build manifest" }
+          $sourceCommit = "Commit: $env:GITHUB_SHA"
+          if (-not (Select-String -Path $buildInfo -SimpleMatch -Pattern $sourceCommit -Quiet)) {
+            throw "Attested ZIP build provenance does not match the current workflow commit"
+          }
           $sbom = Join-Path $folder "composer-source.spdx.json"
           if (-not (Test-Path $sbom)) { throw "Attested ZIP is missing source SBOM" }
           $bill = Get-Content $sbom -Raw | ConvertFrom-Json

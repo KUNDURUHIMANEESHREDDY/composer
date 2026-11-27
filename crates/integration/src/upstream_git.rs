@@ -683,6 +683,48 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn checkout_local_and_included_filter_helpers_are_refused_cross_platform() {
+        let root =
+            std::env::temp_dir().join(format!("composer-filter-crossplatform-{}", Uuid::new_v4()));
+        let repo = root.join("checkout");
+        fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git fixture: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        assert!(reject_host_git_filter_commands(&repo).is_ok());
+        // A checkout's .git/config is not permitted to introduce executable
+        // smudge/clean/process helpers into host-side metadata verification.
+        git(&[
+            "config",
+            "filter.attack.process",
+            "untrusted-helper-should-not-run",
+        ]);
+        assert!(reject_host_git_filter_commands(&repo).is_err());
+        git(&["config", "--unset", "filter.attack.process"]);
+
+        let included = root.join("included-config");
+        fs::write(
+            &included,
+            "[filter \"attack\"]\nsmudge = untrusted-helper-should-not-run\n",
+        )
+        .unwrap();
+        git(&["config", "include.path", included.to_str().unwrap()]);
+        assert!(reject_host_git_filter_commands(&repo).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn host_git_metadata_disables_checkout_controlled_fsmonitor() {
