@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "purpose": "frozen 30-repo static inspection cohort; NOT verified behavioral compatibility",
+  "repos": [
+    {
+      "repo": "tokio-rs/bytes",
+      "sha": "67edc2b999d669eb4f471aff576e213dbcb58871"
+    },
+    {
+      "repo": "serde-rs/json",
+      "sha": "f51fa15a7015c7d02817a46d2db44c899a0016e8"
+    },
+    {
+      "repo": "dtolnay/anyhow",
+      "sha": "c89c9b82b155f701a20eb4a9d3609ad09df5a62f"
+    },
+    {
+      "repo": "rust-lang/regex",
+      "sha": "fde4946d4a3cb367338a21493ec91ec7106a12b4"
+    },
+    {
+      "repo": "rayon-rs/rayon",
+      "sha": "599425d4a4c64714632817f48496dbc53f656a90"
+    },
+    {
+      "repo": "rustls/rustls",
+      "sha": "bd95fd9bdfe9d6e42b62d38e9e6ef38ac0f10608"
+    },
+    {
+      "repo": "hyperium/http",
+      "sha": "a8309a93ce24c19c89cf36bfac504ebed7b96dc7"
+    },
+    {
+      "repo": "tower-rs/tower",
+      "sha": "df06d70dbea345facbffb5881fe8647f53bf424d"
+    },
+    {
+      "repo": "clap-rs/clap",
+      "sha": "f733b73a1ca3d815aa76681b96838adfab16f6a1"
+    },
+    {
+      "repo": "sharkdp/hyperfine",
+      "sha": "c5161524980522320c7d3425e714cc0965a869a5"
+    },
+    {
+      "repo": "unicode-rs/unicode-segmentation",
+      "sha": "2368a49833e4b6dd0e933a8485dd96599e72c870"
+    },
+    {
+      "repo": "bluss/indexmap",
+      "sha": "41a870887c4c77adf665886e63df08f406bfe37a"
+    },
+    {
+      "repo": "BurntSushi/walkdir",
+      "sha": "c00aa730c3e58ebe9677052c5f123f80d53fc9ff"
+    },
+    {
+      "repo": "rust-lang/hashbrown",
+      "sha": "accb84ffdff177bb2643546c03295e3966d99565"
+    },
+    {
+      "repo": "seanmonstar/httparse",
+      "sha": "a0fa552e4e0fa9a5914a736ef3a556748fef709b"
+    },
+    {
+      "repo": "rust-num/num-traits",
+      "sha": "1166177ec398601d6dd4d88891cf7674f3978888"
+    },
+    {
+      "repo": "dtolnay/syn",
+      "sha": "0e5da63adb976a8b6abe9aa23c20b2eac43af239"
+    },
+    {
+      "repo": "bitflags/bitflags",
+      "sha": "8384f6f6e1fd1ab3f448ccf17d400a9e1d6a5280"
+    },
+    {
+      "repo": "uuid-rs/uuid",
+      "sha": "a6f3723917bc8b40fb740b5a6177514682e24b80"
+    },
+    {
+      "repo": "rust-lang/futures-rs",
+      "sha": "92c78c2b985e9b713c658d4d65c84e2688788b87"
+    },
+    {
+      "repo": "tokio-rs/tracing",
+      "sha": "8d4d4d6ceaba222a1fcf94d98f030d2970a26611"
+    },
+    {
+      "repo": "petgraph/petgraph",
+      "sha": "926546ca7a02c4c9d4cc8608ca9fa708816f5db7"
+    },
+    {
+      "repo": "rust-random/rand",
+      "sha": "c03e547d051fee1e7c8b1217ff04b11bf0ea5138"
+    },
+    {
+      "repo": "crossbeam-rs/crossbeam",
+      "sha": "81ff7fe69e8c1d6d3323b4c521f46bb6049eeb18"
+    },
+    {
+      "repo": "smol-rs/smol",
+      "sha": "4157930176b44cb9831283aa4a68ea6d7ab8badf"
+    },
+    {
+      "repo": "rkyv/rkyv",
+      "sha": "d963abc24301a571605a9bafd963dfed72187fd7"
+    },
+    {
+      "repo": "serde-rs/serde",
+      "sha": "5be4690236e16d8a16d80f76703e59091ac3be2e"
+    },
+    {
+      "repo": "dtolnay/thiserror",
+      "sha": "aa7e8161d55acd7792f4e3d1d9b1b3052134dfaf"
+    },
+    {
+      "repo": "hyperium/hyper",
+      "sha": "55247767429fb29753f724b467869aa6203db532"
+    },
+    {
+      "repo": "tokio-rs/mini-redis",
+      "sha": "3d93b42bc363220f85af4fc9e1bebd35b588a4a3"
+    }
+  ]
+}
