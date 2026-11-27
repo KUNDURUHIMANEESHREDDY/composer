@@ -336,7 +336,7 @@ pub fn verify_upstream_git(
     // upstream origin BEFORE its source code can influence API inference.
     let (license, license_sha) =
         checkout_license(&options.upstream_checkout, &options.package, &repo, rev)?;
-    let effective_signature = if options.infer_owned_string_signature {
+    let inferred = if options.infer_owned_string_signature {
         let lib = options.upstream_checkout.join("src/lib.rs");
         let meta = fs::symlink_metadata(&lib)?;
         if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 512 * 1024 {
@@ -345,22 +345,37 @@ pub fn verify_upstream_git(
             ));
         }
         let upstream_source = fs::read_to_string(&lib)?;
-        Some(crate::api_discovery::infer_owned_string_target_signature(
+        Some(crate::api_discovery::infer_typed_git_signature(
             &upstream_source,
             &options.public_symbol,
             &options.target_alias,
         ).ok_or_else(|| VerifiedRustError::Unsafe(
-            "no unique supported public borrowed-string function in pinned upstream Git source".into(),
+            "no unique supported public borrowed-string or concrete scalar function in pinned upstream Git source".into(),
         ))?)
     } else {
-        options.target_signature.clone()
+        None
     };
-    let typed_bridge = crate::reviewed_upstream_adapter::reviewed_string_adapter(
-        &format!("composer_git_{}", options.package.replace('-', "_")),
-        &options.public_symbol,
-        &options.target_alias,
-        effective_signature.as_deref(),
-    )?;
+    let effective_signature = inferred
+        .as_ref()
+        .map(|item| item.target_signature.clone())
+        .or_else(|| options.target_signature.clone());
+    let crate_key = format!("composer_git_{}", options.package.replace('-', "_"));
+    let typed_bridge = if let Some(inferred) = &inferred {
+        crate::reviewed_upstream_adapter::reviewed_typed_git_adapter(
+            &crate_key,
+            &options.public_symbol,
+            &options.target_alias,
+            effective_signature.as_deref(),
+            Some(&inferred.source_parameters),
+        )?
+    } else {
+        crate::reviewed_upstream_adapter::reviewed_string_adapter(
+            &crate_key,
+            &options.public_symbol,
+            &options.target_alias,
+            effective_signature.as_deref(),
+        )?
+    };
     let original = options.target_root.canonicalize()?;
     validate_contract_test(&original, &options.contract_test, &options.target_alias)?;
     let target_manifest = original.join("Cargo.toml");
@@ -490,7 +505,14 @@ pub fn verify_upstream_git(
             "target_alias": options.target_alias,
             "target_signature": effective_signature,
             "signature_inferred_from_pinned_source": options.infer_owned_string_signature,
-            "adapter_kind": if typed_bridge.is_some() { "borrow_owned_strings_as_str" } else { "direct_reexport" },
+            "inference_source_parameters": inferred.as_ref().map(|item| &item.source_parameters),
+            "adapter_kind": if typed_bridge.is_none() {
+                "direct_reexport"
+            } else if inferred.as_ref().is_some_and(|item| item.source_parameters.iter().any(|ty| ty != "&str")) {
+                "inferred_concrete_typed_adapter"
+            } else {
+                "borrow_owned_strings_as_str"
+            },
             "offline_tests_passed": true,
             "network_disabled": true,
             "docker_image_id": image_id,
