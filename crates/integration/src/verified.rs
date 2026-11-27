@@ -1046,7 +1046,9 @@ pub(crate) fn docker_build_with_git_cache(
 /// External gVisor runsc is an opt-in Docker OCI runtime: Composer never
 /// implements a sandbox kernel or silently downgrades a requested runtime.
 /// Docker's own engine/runtime registry is responsible for executing runsc.
-fn validated_verifier_runtime(requested: Option<&str>) -> Result<Option<&'static str>, VerifiedRustError> {
+fn validated_verifier_runtime(
+    requested: Option<&str>,
+) -> Result<Option<&'static str>, VerifiedRustError> {
     match requested {
         None => Ok(None),
         Some("runsc") => Ok(Some("runsc")),
@@ -1235,9 +1237,15 @@ mod tests {
     #[test]
     fn external_gvisor_runtime_selection_refuses_unknown_or_empty_fallbacks() {
         assert_eq!(validated_verifier_runtime(None).unwrap(), None);
-        assert_eq!(validated_verifier_runtime(Some("runsc")).unwrap(), Some("runsc"));
+        assert_eq!(
+            validated_verifier_runtime(Some("runsc")).unwrap(),
+            Some("runsc")
+        );
         for invalid in ["", "runc", "kata", "runsc --privileged", " runsc", "RUNSC"] {
-            assert!(validated_verifier_runtime(Some(invalid)).is_err(), "{invalid}");
+            assert!(
+                validated_verifier_runtime(Some(invalid)).is_err(),
+                "{invalid}"
+            );
         }
     }
 
