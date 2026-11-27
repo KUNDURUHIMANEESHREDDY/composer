@@ -11,9 +11,7 @@ use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{
-    UpstreamCrateOptions, VerifiedRustError, verify_upstream_crate,
-};
+use crate::{UpstreamCrateOptions, VerifiedRustError, verify_upstream_crate};
 
 const MAX_CANDIDATES: usize = 5;
 const MAX_ATTEMPTS: usize = 10;
@@ -73,9 +71,8 @@ fn version_constraint(input: &str) -> Result<VersionReq, VerifiedRustError> {
         return Ok(VersionReq::STAR);
     }
     if let Ok(version) = Version::parse(input) {
-        return VersionReq::parse(&format!("={version}")).map_err(|err| {
-            VerifiedRustError::Dependency(format!("invalid exact version: {err}"))
-        });
+        return VersionReq::parse(&format!("={version}"))
+            .map_err(|err| VerifiedRustError::Dependency(format!("invalid exact version: {err}")));
     }
     VersionReq::parse(input)
         .map_err(|err| VerifiedRustError::Dependency(format!("invalid semver range: {err}")))
@@ -84,8 +81,9 @@ fn version_constraint(input: &str) -> Result<VersionReq, VerifiedRustError> {
 fn registry_versions(cache: &Path, package: &str) -> Result<Vec<Version>, VerifiedRustError> {
     if package.is_empty()
         || package.len() > 64
-        || !package.bytes().all(|byte| byte.is_ascii_lowercase()
-            || byte.is_ascii_digit() || byte == b'-' || byte == b'_')
+        || !package.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
+        })
     {
         return Err(VerifiedRustError::Unsafe("invalid registry package".into()));
     }
@@ -94,12 +92,16 @@ fn registry_versions(cache: &Path, package: &str) -> Result<Vec<Version>, Verifi
         VerifiedRustError::Dependency("Cargo registry cache/cache is not provisioned".into())
     })?;
     if !meta.is_dir() || meta.file_type().is_symlink() {
-        return Err(VerifiedRustError::Unsafe("Cargo cache directory must be regular".into()));
+        return Err(VerifiedRustError::Unsafe(
+            "Cargo cache directory must be regular".into(),
+        ));
     }
     let mut versions = BTreeSet::new();
     let registries = fs::read_dir(&dir)?.collect::<Result<Vec<_>, _>>()?;
     if registries.len() > 16 {
-        return Err(VerifiedRustError::Unsafe("too many registry cache roots".into()));
+        return Err(VerifiedRustError::Unsafe(
+            "too many registry cache roots".into(),
+        ));
     }
     let prefix = format!("{package}-");
     for registry in registries {
@@ -109,7 +111,9 @@ fn registry_versions(cache: &Path, package: &str) -> Result<Vec<Version>, Verifi
         }
         let entries = fs::read_dir(registry.path())?.collect::<Result<Vec<_>, _>>()?;
         if entries.len() > 30000 {
-            return Err(VerifiedRustError::Unsafe("Cargo cache entry limit exceeded".into()));
+            return Err(VerifiedRustError::Unsafe(
+                "Cargo cache entry limit exceeded".into(),
+            ));
         }
         for entry in entries {
             let filename = entry.file_name().to_string_lossy().into_owned();
@@ -137,10 +141,14 @@ fn registry_versions(cache: &Path, package: &str) -> Result<Vec<Version>, Verifi
 fn existing_direct_dependency(target: &Path, package: &str) -> Result<bool, VerifiedRustError> {
     let cargo: toml::Value = toml::from_str(&fs::read_to_string(target.join("Cargo.toml"))?)
         .map_err(|err| VerifiedRustError::Toml(err.to_string()))?;
-    Ok(["dependencies", "build-dependencies", "dev-dependencies"].iter().any(|key| {
-        cargo.get(*key).and_then(toml::Value::as_table)
-            .is_some_and(|table| table.contains_key(package))
-    }))
+    Ok(["dependencies", "build-dependencies", "dev-dependencies"]
+        .iter()
+        .any(|key| {
+            cargo
+                .get(*key)
+                .and_then(toml::Value::as_table)
+                .is_some_and(|table| table.contains_key(package))
+        }))
 }
 
 fn short_error(err: &VerifiedRustError) -> String {
@@ -202,10 +210,14 @@ pub fn recover_upstream_crate(
         ));
     }
     let original = options.target_root.canonicalize()?;
-    let parent = options.output_root.parent()
+    let parent = options
+        .output_root
+        .parent()
         .ok_or_else(|| VerifiedRustError::Unsafe("output parent required".into()))?
         .canonicalize()?;
-    let name = options.output_root.file_name()
+    let name = options
+        .output_root
+        .file_name()
         .ok_or_else(|| VerifiedRustError::Unsafe("output name required".into()))?;
     let final_output = parent.join(name);
     if final_output.starts_with(&original) || original.starts_with(&final_output) {
@@ -216,7 +228,9 @@ pub fn recover_upstream_crate(
     // Fail early for invalid target-owned contracts, rather than classifying
     // them as unsuccessful implementations during candidate fallback.
     crate::reviewed::validate_contract_test(
-        &original, &options.contract_test, &options.target_alias,
+        &original,
+        &options.contract_test,
+        &options.target_alias,
     )?;
 
     let mut attempts = Vec::new();
@@ -243,7 +257,8 @@ pub fn recover_upstream_crate(
             if attempts.len() >= MAX_ATTEMPTS {
                 break;
             }
-            let alias = conflict.then(|| format!("composer_{}", candidate.package.replace('-', "_")));
+            let alias =
+                conflict.then(|| format!("composer_{}", candidate.package.replace('-', "_")));
             let scratch = parent.join(format!(".composer-recovery-{}.tmp", Uuid::new_v4()));
             let result = verify_upstream_crate(&UpstreamCrateOptions {
                 target_root: original.clone(),
@@ -267,7 +282,9 @@ pub fn recover_upstream_crate(
                         public_symbol: candidate.public_symbol.clone(),
                         isolated_dependency: conflict,
                         status: "verified".into(),
-                        explanation: "Independent target tests and Cargo lockfile verified in offline Docker".into(),
+                        explanation:
+                            "Independent target tests and Cargo lockfile verified in offline Docker"
+                                .into(),
                     });
                     let proof_path = scratch.join(RECOVERY_EVIDENCE);
                     let proof = serde_json::json!({
@@ -345,9 +362,13 @@ mod tests {
         let base = std::env::temp_dir().join(format!("composer-cache-{}", Uuid::new_v4()));
         let cache = base.join("cache/index.crates.io-test");
         fs::create_dir_all(&cache).unwrap();
-        for name in ["strsim-0.10.0.crate", "strsim-0.11.0.crate",
-                     "strsim-0.11.1.crate", "strsim-0.12.0-alpha.1.crate",
-                     "unrelated-9.9.9.crate"] {
+        for name in [
+            "strsim-0.10.0.crate",
+            "strsim-0.11.0.crate",
+            "strsim-0.11.1.crate",
+            "strsim-0.12.0-alpha.1.crate",
+            "unrelated-9.9.9.crate",
+        ] {
             fs::write(cache.join(name), b"fixture").unwrap();
         }
         let versions = registry_versions(&base, "strsim").unwrap();
@@ -355,12 +376,22 @@ mod tests {
         assert_eq!(versions.len(), 3);
         let req = version_constraint("^0.11").unwrap();
         assert_eq!(
-            versions.into_iter().filter(|v| req.matches(v)).collect::<Vec<_>>(),
-            vec![Version::parse("0.11.1").unwrap(), Version::parse("0.11.0").unwrap()],
+            versions
+                .into_iter()
+                .filter(|v| req.matches(v))
+                .collect::<Vec<_>>(),
+            vec![
+                Version::parse("0.11.1").unwrap(),
+                Version::parse("0.11.0").unwrap()
+            ],
         );
         let exact = version_constraint("0.11.1").unwrap();
         assert!(!exact.matches(&Version::parse("0.11.0").unwrap()));
-        assert!(version_constraint("latest").unwrap().matches(&Version::parse("0.11.1").unwrap()));
+        assert!(
+            version_constraint("latest")
+                .unwrap()
+                .matches(&Version::parse("0.11.1").unwrap())
+        );
         assert!(version_constraint("not a version!").is_err());
         fs::remove_dir_all(base).unwrap();
     }
