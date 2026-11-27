@@ -1,0 +1,35 @@
+name: Reuse independent upstream published Rust crates
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/external-upstream-reuse.yml
+      - tests/test_external_crate_adoption_public.py
+      - crates/integration/**
+      - apps/cli/**
+  push:
+    branches:
+      - feat/verified-upstream-crate-reuse
+    paths:
+      - .github/workflows/external-upstream-reuse.yml
+      - tests/test_external_crate_adoption_public.py
+      - crates/integration/**
+      - apps/cli/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  external-upstream:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Provision offline verifier
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
+      - name: Import published strsim API into unrelated pinned public target
+        run: python3 -u tests/test_external_crate_adoption_public.py

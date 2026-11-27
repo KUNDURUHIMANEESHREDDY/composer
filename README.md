@@ -102,7 +102,7 @@ cargo run -p composer-cli -- verify-rust .composer/capsules/authentication path/
 
 **Read-only Rust API discovery:** Use `composer suggest-rust-api path/to/capsule path/to/target --output suggestions.json` to compare included public Rust functions with explicit `todo!()` or `unimplemented!()` function stubs in the target library's `src/lib.rs`. The command never modifies either project, executes source code, or claims semantic compatibility. It reports up to five ranked candidates per target stub, only for supported primitive/string signatures and fixed-width infallible numeric widening; ties are marked ambiguous, unrelated names are not selected, and a candidate is not a verified integration. The generated `suggested_cli_rule` may be reviewed and passed to `verify-rust --api-signature` with independent behavior tests. The current scanner does not understand traits, generics, methods, arbitrary types, renamed concepts, or implicit requirements absent an explicit target stub.
 
-**Reviewed suggestion → verified execution (opt-in):** After `suggest-rust-api` reports a unique candidate, inspect the exact `suggested_cli_rule`, review the source and license, and add an **independently authored** target integration test under `tests/contract_name.rs` that calls the unfinished public API with assertions. Then run `composer verify-rust CAPSULE TARGET --output NEW_TARGET --license-reviewed --reviewed-api-rule "math::double=adapted_double(u16)->u64" --contract-test tests/contract_name.rs`. Composer recomputes the candidate against the current capsule/target and rejects stale, ambiguous, missing-test, unsupported or mixed-mode requests. In an isolated target copy it replaces **only the exact unfinished stub body**, then requires network-disabled Docker compilation, the entire Cargo test suite, and retained source/license provenance before publication. The original target is unchanged. A passing compiler/test run demonstrates the supplied assertions, not general semantic equivalence or autonomous intent understanding. Never treat a discovery suggestion alone as completion.
+**Reviewed suggestion → verified execution (opt-in):** After `suggest-rust-api` reports a unique candidate, inspect the exact `suggested_cli_rule`, review the source and license, and add an **independently authored** target integration test under `tests/contract_name.rs` that calls the unfinished public API with assertions. Then run `composer verify-rust CAPSULE TARGET --output NEW_TARGET --license-reviewed --reviewed-api-rule "math::double=adapted_double(u16)->u64" --contract-test tests/contract_name.rs`. Composer recomputes the candidate against the current capsule/target and rejects stale, ambiguous, missing-test, unsupported or mixed-mode requests. In an isolated target copy it replaces **only the exact unfinished stub body**, then requires network-disabled Docker compilation, the entire Cargo test suite, and retained source/license provenance before publication. The original target is unchanged. Contract-test admission parses Rust syntax and requires a top-level active `#[test]` containing an `assert!`, `assert_eq!` or `assert_ne!` call that directly invokes the requested target function; test text in comments, string literals, unrelated assertions, ignored tests, conditional attributes and expected-panic attributes is refused. This is intentionally conservative (e.g. helper-based tests may require rewriting) and is **not** a guarantee of dynamic coverage. A passing compiler/test run demonstrates the supplied assertions, not general semantic equivalence or autonomous intent understanding. Never treat a discovery suggestion alone as completion.
 
 Compiler-verified public API adaptation is opt-in: append `--api-alias "math::double=adapted_scale"` to `verify-rust` to expose a public source symbol as a target library root re-export. Repeat the flag for up to eight symbols. A library target (`src/lib.rs`) is required; unsafe, duplicate, or unresolvable paths are rejected, and Cargo must compile and pass the target's existing tests before publication. This is a scoped re-export adapter, not general type/signature translation. A second opt-in form, `--api-signature "math::double=adapted_scale(u16)->u64"`, generates a target-side public function wrapper using compiler-inferred `Into` conversions for whitelisted primitive/string types (maximum four parameters, eight total adapters). Only compiler-supported conversions are allowed; no casts or arbitrary Rust snippets. Incompatible signatures fail isolated verification without publishing output. The target's behavioral tests must still establish correctness.
 
@@ -174,6 +174,48 @@ The capsule is an extraction artifact, not a guaranteed standalone package. Its 
 The generated adapter contract is a draft that lists candidate symbols and unresolved mapping questions. `composer integrate` stages only manifest-listed capsule files plus plan, verification, adapter-contract, and handoff documentation into a new `.composer/integrations/<capability-id>/` directory. It refuses to overwrite an existing destination and re-verifies the staged capsule before finalizing the directory.
 
 `composer integrate` remains safe staging only. The opt-in `composer wire-rust` command provides restricted single-file Rust wiring with a persistent entrypoint backup. `composer verify-rust` extends it with conservative missing-dependency adoption, offline Cargo lockfile solving, and Docker-isolated compilation/tests on a newly generated target copy; it publishes the copy and evidence only after success. General-purpose adapter generation and broader dependency solving remain unimplemented.
+
+## Reuse existing third-party packages (no feature reimplementation)
+
+Prefer adopting an existing, independently maintained published library when the
+requested capability already exists upstream. \`composer verify-external-rust-crate\`
+adds an **exact crates.io release** to a disposable copy of a standalone Rust
+target, re-exports one reviewed public function, and runs **existing target-owned
+behavioral tests** with Composer's restricted offline Docker Cargo verifier.
+
+For example, the independent [rapidfuzz/strsim-rs](https://github.com/rapidfuzz/strsim-rs)
+project publishes the MIT-licensed \`strsim\` crate. To reuse its \`jaro\`
+function in an unrelated target instead of rewriting Jaro from scratch:
+
+\`\`\`sh
+cargo run -p composer-cli -- verify-external-rust-crate path/to/target \
+  --output path/to/verified-output \
+  --package strsim --version 0.11.1 \
+  --public-symbol jaro --target-alias ported_jaro \
+  --contract-test tests/external_contract.rs \
+  --registry-cache "$HOME/.cargo/registry" \
+  --upstream-repository https://github.com/rapidfuzz/strsim-rs \
+  --upstream-commit dacc84c0dc61eff0ee0ff66962bcf2e17018ad26 \
+  --license-reviewed
+\`\`\`
+
+The target must already contain an independently authored, active integration
+test asserting \`ported_jaro(...)\` behavior. The exact released crate and all
+its dependency artifacts must be pre-cached using **Cargo fetch only** on a
+throwaway manifest, before offline Docker verification. Composer neither
+downloads nor executes upstream source or build scripts on the host. On success,
+it publishes a new copy with an exact \`=version\` requirement, re-export,
+Cargo.lock/checksum and \`composer-upstream-crate-evidence.json\`. On any failure
+it publishes no result and leaves the original unchanged.
+
+The supplied GitHub commit and license-review flag are **human assertions**.
+A crates.io checksum identifies the resolved package archive; Composer does
+**not** establish cryptographic correspondence between the supplied upstream
+Git commit and that published archive. It does not provide automatic capability
+search, license clearance, total semantic equivalence or VM-grade isolation.
+Only a single public function re-export from a standard crates.io package is
+supported; complex adapters and Git-only/unpublished repositories still need
+additional verification work.
 
 ## Current limitations
 

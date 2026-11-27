@@ -10,16 +10,71 @@ use std::{
 
 use composer_intelligence::CapsuleManifest;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{RustWiringOptions, verify_capsule, wire::wire_rust_module_for_verified_sandbox};
 
 const DEFAULT_IMAGE: &str = "rust:1.99-slim";
+const SYSTEM_LIBS_IMAGE: &str = "docker.io/library/rust@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07";
+const NIGHTLY_IMAGE: &str = "docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab";
+const GUNGRAUN_IMAGE: &str = "composer-verifier-gungraun:0.20.0";
+const RUSTC_DEV_IMAGE: &str = "composer-verifier-rustc-dev:nightly-2026-11-25";
+
+fn validated_verifier_image(value: Option<&str>) -> Result<&'static str, VerifiedRustError> {
+    match value {
+        None | Some("stable") => Ok(DEFAULT_IMAGE),
+        Some("nightly-2026-11-25") => Ok(NIGHTLY_IMAGE),
+        Some("stable-system-libs") => Ok(SYSTEM_LIBS_IMAGE),
+        Some("nightly-gungraun-0.20.0") => Ok(GUNGRAUN_IMAGE),
+        Some("nightly-rustc-dev-2026-11-25") => Ok(RUSTC_DEV_IMAGE),
+        _ => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_TOOLCHAIN".into(),
+        )),
+    }
+}
+
+pub(crate) fn selected_verifier_image() -> Result<&'static str, VerifiedRustError> {
+    match std::env::var("COMPOSER_VERIFIER_TOOLCHAIN") {
+        Ok(value) => validated_verifier_image(Some(&value)),
+        Err(std::env::VarError::NotPresent) => validated_verifier_image(None),
+        Err(_) => Err(VerifiedRustError::Unsafe(
+            "invalid COMPOSER_VERIFIER_TOOLCHAIN".into(),
+        )),
+    }
+}
+
+#[test]
+fn verifier_toolchain_is_allowlisted() {
+    assert_eq!(validated_verifier_image(None).unwrap(), DEFAULT_IMAGE);
+    assert_eq!(
+        validated_verifier_image(Some("stable")).unwrap(),
+        DEFAULT_IMAGE
+    );
+    assert_eq!(
+        validated_verifier_image(Some("nightly-2026-11-25")).unwrap(),
+        NIGHTLY_IMAGE
+    );
+    assert_eq!(
+        validated_verifier_image(Some("stable-system-libs")).unwrap(),
+        SYSTEM_LIBS_IMAGE
+    );
+    assert_eq!(
+        validated_verifier_image(Some("nightly-gungraun-0.20.0")).unwrap(),
+        GUNGRAUN_IMAGE
+    );
+    assert_eq!(
+        validated_verifier_image(Some("nightly-rustc-dev-2026-11-25")).unwrap(),
+        RUSTC_DEV_IMAGE
+    );
+    assert!(validated_verifier_image(Some("nightly")).is_err());
+    assert!(validated_verifier_image(Some("arbitrary/image")).is_err());
+}
 const MAX_FILES: usize = 1500;
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_LOG_CHARS: usize = 16000;
-const TIMEOUT: Duration = Duration::from_secs(240);
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(240);
 
 #[derive(Debug, Clone)]
 pub struct VerifiedRustOptions {
@@ -224,13 +279,13 @@ pub fn compose_verified_rust(
         let evidence = BuildEvidence {
             schema_version: 1,
             capsule_id: wired.capsule_id.clone(),
-            image: DEFAULT_IMAGE.into(),
+            image: selected_verifier_image()?.into(),
             image_id: image_id.clone(),
             network_disabled: true,
             read_only_container_root: true,
             unprivileged_user: user.clone(),
             cpu_limit: "1".into(),
-            memory_limit: "1024m".into(),
+            memory_limit: format!("{}m", selected_verifier_memory_mb()?),
             commands: vec![
                 "cargo test --locked --offline --all-targets (initial attempt)".into(),
                 "cargo generate-lockfile --offline (at most once on explicit stale lockfile error)"
@@ -269,7 +324,7 @@ pub fn compose_verified_rust(
             verified_api_signatures,
             reviewed_api_rule,
             reviewed_contract_test,
-            docker_image: DEFAULT_IMAGE.into(),
+            docker_image: selected_verifier_image()?.into(),
             offline_lockfile_resolved: true,
             isolated_tests_passed: true,
             evidence_path: output.join(evidence_name),
@@ -356,7 +411,28 @@ fn valid_public_alias_identifier(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
 }
 
-fn copy_bounded_target(source: &Path, output: &Path) -> Result<(), VerifiedRustError> {
+pub(crate) fn copy_bounded_target(source: &Path, output: &Path) -> Result<(), VerifiedRustError> {
+    copy_bounded_target_with_workspace_dirs(source, output, &[])
+}
+
+/// Reuse Composer's bounded, symlink-rejecting copier for explicitly listed
+/// Cargo workspace member directories. This does not traverse arbitrary paths.
+pub(crate) fn copy_bounded_target_with_workspace_dirs(
+    source: &Path,
+    output: &Path,
+    workspace_dirs: &[String],
+) -> Result<(), VerifiedRustError> {
+    copy_bounded_target_with_workspace_member(source, output, workspace_dirs, false)
+}
+
+/// Virtual Cargo workspace roots legitimately have no root src/lib.rs.
+/// Member selection is explicitly verified before requesting this mode.
+pub(crate) fn copy_bounded_target_with_workspace_member(
+    source: &Path,
+    output: &Path,
+    workspace_dirs: &[String],
+    virtual_root: bool,
+) -> Result<(), VerifiedRustError> {
     let mut total_files = 0usize;
     let mut total_bytes = 0u64;
     for name in [
@@ -389,24 +465,39 @@ fn copy_bounded_target(source: &Path, output: &Path) -> Result<(), VerifiedRustE
             "target Cargo.toml is missing".into(),
         ));
     }
-    for dir in [
-        "src",
-        "tests",
-        "examples",
-        "benches",
-        "third_party_licenses",
-    ] {
-        let source_dir = source.join(dir);
+    let mut directories = std::collections::BTreeSet::from([
+        "src".to_owned(),
+        "tests".to_owned(),
+        "examples".to_owned(),
+        "benches".to_owned(),
+        "third_party_licenses".to_owned(),
+        "testdata".to_owned(),
+    ]);
+    for name in workspace_dirs {
+        if name.is_empty()
+            || name.starts_with('.')
+            || name
+                .bytes()
+                .any(|c| !c.is_ascii_alphanumeric() && c != b'-' && c != b'_')
+        {
+            return Err(VerifiedRustError::Unsafe(
+                "unsafe Cargo workspace member root directory".into(),
+            ));
+        }
+        directories.insert(name.to_owned());
+    }
+    for dir in directories {
+        let source_dir = source.join(&dir);
         if source_dir.exists() {
             copy_tree(
                 &source_dir,
-                &output.join(dir),
+                &output.join(&dir),
                 &mut total_files,
                 &mut total_bytes,
             )?;
         }
     }
-    if !output.join("src").is_dir() {
+    if !virtual_root && !output.join("src").is_dir() {
         return Err(VerifiedRustError::Unsafe(
             "target src directory is missing".into(),
         ));
@@ -547,9 +638,61 @@ fn copy_tree(
         } else if kind.is_file() {
             let allowed = matches!(
                 item.extension().and_then(|ext| ext.to_str()),
-                Some("rs" | "json" | "toml" | "txt" | "md" | "sql" | "html")
+                Some("rs" | "json" | "toml" | "txt" | "md" | "sql" | "html" | "snap" | "stderr")
             );
-            if allowed {
+            // Exactly one known, public, immutable upstream test certificate
+            // is needed by smol's full-scope example compilation. Never copy
+            // arbitrary .pfx files, which could contain private user secrets.
+            let expected_fixture = match name.to_str() {
+                Some("identity.pfx") => Some((
+                    2421,
+                    "08895e488582ed2f75d17e8b1c56d2c9cd8989c344cd48bdce93c88cfec1bd35",
+                )),
+                Some("certificate.pem") => Some((
+                    1204,
+                    "7a5c3f70fa9ad09b631709cbcecbc037794c1e69e0d6507b1d29a7078c55f84c",
+                )),
+                _ => None,
+            };
+            let reviewed_fixture = expected_fixture.is_some_and(|(len, digest)| {
+                source
+                    .file_name()
+                    .is_some_and(|n| n.to_str() == Some("examples"))
+                    && fs::read(&item).is_ok_and(|data| {
+                        data.len() == len && format!("{:x}", Sha256::digest(&data)) == digest
+                    })
+            });
+            // Test-owned binary fuzz inputs are data, not executables.
+            // Permit only a bounded regular file under tests/fuzz/, not
+            // arbitrary .bin files elsewhere in the repository or host.
+            let test_fuzz_fixture = item.extension().is_some_and(|ext| ext == "bin")
+                && source.file_name().is_some_and(|n| n == "fuzz")
+                && source
+                    .parent()
+                    .is_some_and(|parent| parent.file_name().is_some_and(|n| n == "tests"))
+                && fs::metadata(&item)?.len() <= 512 * 1024;
+            // The pinned regex repository has extensionless crash/reproducer
+            // inputs used by its existing fuzz regression tests. Only allow
+            // plain, bounded fixtures from tests/fuzz/testdata (not any other
+            // extensionless file; never follow links).
+            let extensionless_regex_fixture = item.extension().is_none()
+                && source.file_name().is_some_and(|n| n == "testdata")
+                && source.parent().is_some_and(|parent| {
+                    parent.file_name().is_some_and(|n| n == "fuzz")
+                        && parent
+                            .parent()
+                            .is_some_and(|root| root.file_name().is_some_and(|n| n == "tests"))
+                })
+                && name.to_str().is_some_and(|filename| {
+                    ["crash-", "minimized-from-", "slow-unit-"]
+                        .iter()
+                        .any(|prefix| filename.starts_with(prefix))
+                        && filename
+                            .bytes()
+                            .all(|ch| ch.is_ascii_alphanumeric() || ch == b'-' || ch == b'_')
+                })
+                && fs::metadata(&item)?.len() <= 512 * 1024;
+            if allowed || reviewed_fixture || test_fuzz_fixture || extensionless_regex_fixture {
                 copy_regular(&item, &destination.join(name), files, bytes)?;
             }
         } else {
@@ -963,7 +1106,7 @@ fn mount_arg(path: &Path, target: &str, readonly: bool) -> Result<String, Verifi
 /// temporary project directories without making copied source world-readable.
 /// Docker Desktop on Windows continues to use an unprivileged fixed UID.
 #[cfg(unix)]
-fn nonroot_container_user() -> Result<String, VerifiedRustError> {
+pub(crate) fn nonroot_container_user() -> Result<String, VerifiedRustError> {
     let mut ids = Vec::new();
     for flag in ["-u", "-g"] {
         let output = Command::new("id").arg(flag).output().map_err(|err| {
@@ -986,18 +1129,19 @@ fn nonroot_container_user() -> Result<String, VerifiedRustError> {
 }
 
 #[cfg(not(unix))]
-fn nonroot_container_user() -> Result<String, VerifiedRustError> {
+pub(crate) fn nonroot_container_user() -> Result<String, VerifiedRustError> {
     Ok("65534:65534".into())
 }
 
-fn inspect_local_image_id() -> Result<String, VerifiedRustError> {
+pub(crate) fn inspect_local_image_id() -> Result<String, VerifiedRustError> {
+    let image = selected_verifier_image()?;
     let output = Command::new("docker")
-        .args(["image", "inspect", "--format", "{{.Id}}", DEFAULT_IMAGE])
+        .args(["image", "inspect", "--format", "{{.Id}}", image])
         .output()
         .map_err(|err| VerifiedRustError::Docker(format!("Docker CLI unavailable: {err}")))?;
     if !output.status.success() {
         return Err(VerifiedRustError::Docker(format!(
-            "{DEFAULT_IMAGE} must already be installed locally; no image pull is permitted during verification"
+            "{image} must already be installed locally; no image pull is permitted during verification"
         )));
     }
     let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -1012,15 +1156,338 @@ fn inspect_local_image_id() -> Result<String, VerifiedRustError> {
     Ok(value)
 }
 
-fn docker_build(
+pub(crate) fn docker_build(
     staged: &Path,
     results: &Path,
     registry: Option<&Path>,
     image_id: &str,
     container_user: &str,
 ) -> Result<String, VerifiedRustError> {
-    // No shell expansion from user input: a fixed script with process arguments.
-    const SCRIPT: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
+    docker_build_internal(
+        staged,
+        results,
+        registry,
+        None,
+        image_id,
+        container_user,
+        VerifierTestScope {
+            contract_focused: false,
+            member_package: None,
+        },
+    )
+}
+
+/// Reuse the same restricted Docker pipeline for pinned Cargo Git dependencies.
+/// Only the already fetched Cargo git storage is mounted, never the Cargo home
+/// directory or its credentials/configuration.
+pub(crate) struct VerifierTestScope<'a> {
+    pub contract_focused: bool,
+    pub member_package: Option<&'a str>,
+}
+
+pub(crate) fn docker_build_with_git_cache(
+    staged: &Path,
+    results: &Path,
+    registry: Option<&Path>,
+    git_cache: &Path,
+    image_id: &str,
+    container_user: &str,
+    scope: VerifierTestScope<'_>,
+) -> Result<String, VerifiedRustError> {
+    docker_build_internal(
+        staged,
+        results,
+        registry,
+        Some(git_cache),
+        image_id,
+        container_user,
+        scope,
+    )
+}
+
+/// External gVisor runsc is an opt-in Docker OCI runtime: Composer never
+/// implements a sandbox kernel or silently downgrades a requested runtime.
+/// Docker's own engine/runtime registry is responsible for executing runsc.
+fn validated_verifier_runtime(
+    requested: Option<&str>,
+) -> Result<Option<&'static str>, VerifiedRustError> {
+    match requested {
+        None => Ok(None),
+        Some("runsc") => Ok(Some("runsc")),
+        Some(_) => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_RUNTIME; supported hardened option is exactly runsc; refusing fallback to default Docker runtime".into(),
+        )),
+    }
+}
+
+fn selected_verifier_runtime() -> Result<Option<&'static str>, VerifiedRustError> {
+    match std::env::var_os("COMPOSER_VERIFIER_RUNTIME") {
+        None => validated_verifier_runtime(None),
+        Some(value) => validated_verifier_runtime(Some(value.to_str().ok_or_else(|| {
+            VerifiedRustError::Unsafe("COMPOSER_VERIFIER_RUNTIME must be UTF-8".into())
+        })?)),
+    }
+}
+
+/// Keep the default verifier small. Large third-party compile-test suites
+/// may explicitly opt into a bounded 4 GiB container and disposable work tmpfs.
+/// This does not alter the tested Cargo targets, sandbox privileges or network.
+fn validated_verifier_memory_mb(input: Option<&str>) -> Result<u32, VerifiedRustError> {
+    match input {
+        None | Some("1024") => Ok(1024),
+        Some("2048") => Ok(2048),
+        Some("4096") => Ok(4096),
+        _ => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_MEMORY_MB; only 1024, 2048, 4096 permitted".into(),
+        )),
+    }
+}
+
+pub(crate) fn selected_verifier_memory_mb() -> Result<u32, VerifiedRustError> {
+    match std::env::var_os("COMPOSER_VERIFIER_MEMORY_MB") {
+        None => validated_verifier_memory_mb(None),
+        Some(value) => validated_verifier_memory_mb(Some(value.to_str().ok_or_else(|| {
+            VerifiedRustError::Unsafe("COMPOSER_VERIFIER_MEMORY_MB must be UTF-8".into())
+        })?)),
+    }
+}
+
+fn validated_verifier_features(input: Option<&str>) -> Result<bool, VerifiedRustError> {
+    match input {
+        None | Some("default") => Ok(false),
+        Some("all") => Ok(true),
+        _ => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_FEATURES; only default or all permitted".into(),
+        )),
+    }
+}
+
+pub(crate) fn selected_verifier_features() -> Result<bool, VerifiedRustError> {
+    match std::env::var("COMPOSER_VERIFIER_FEATURES") {
+        Ok(value) => validated_verifier_features(Some(&value)),
+        Err(std::env::VarError::NotPresent) => validated_verifier_features(None),
+        Err(_) => Err(VerifiedRustError::Unsafe(
+            "COMPOSER_VERIFIER_FEATURES must be UTF-8".into(),
+        )),
+    }
+}
+
+fn validated_verifier_timeout_secs(input: Option<&str>) -> Result<Duration, VerifiedRustError> {
+    match input {
+        None | Some("240") => Ok(DEFAULT_TIMEOUT),
+        Some("900") => Ok(Duration::from_secs(900)),
+        _ => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_TIMEOUT_SECS; only 240 or 900 permitted".into(),
+        )),
+    }
+}
+
+pub(crate) fn selected_verifier_timeout_secs() -> Result<u64, VerifiedRustError> {
+    let timeout = match std::env::var("COMPOSER_VERIFIER_TIMEOUT_SECS") {
+        Ok(value) => validated_verifier_timeout_secs(Some(&value)),
+        Err(std::env::VarError::NotPresent) => validated_verifier_timeout_secs(None),
+        Err(_) => Err(VerifiedRustError::Unsafe(
+            "COMPOSER_VERIFIER_TIMEOUT_SECS must be UTF-8".into(),
+        )),
+    }?;
+    Ok(timeout.as_secs())
+}
+
+#[test]
+fn verifier_timeout_is_explicitly_bounded() {
+    assert_eq!(
+        validated_verifier_timeout_secs(None).unwrap(),
+        DEFAULT_TIMEOUT
+    );
+    assert_eq!(
+        validated_verifier_timeout_secs(Some("900"))
+            .unwrap()
+            .as_secs(),
+        900
+    );
+    assert!(validated_verifier_timeout_secs(Some("0")).is_err());
+    assert!(validated_verifier_timeout_secs(Some("unlimited")).is_err());
+}
+
+fn validated_verifier_pids(input: Option<&str>) -> Result<u32, VerifiedRustError> {
+    match input {
+        None | Some("64") => Ok(64),
+        Some("1536") => Ok(1536),
+        _ => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_PIDS; only 64 or 1536 permitted".into(),
+        )),
+    }
+}
+
+pub(crate) fn selected_verifier_pids() -> Result<u32, VerifiedRustError> {
+    match std::env::var("COMPOSER_VERIFIER_PIDS") {
+        Ok(value) => validated_verifier_pids(Some(&value)),
+        Err(std::env::VarError::NotPresent) => validated_verifier_pids(None),
+        Err(_) => Err(VerifiedRustError::Unsafe(
+            "COMPOSER_VERIFIER_PIDS must be UTF-8".into(),
+        )),
+    }
+}
+
+#[test]
+fn verifier_pid_profile_is_bounded() {
+    assert_eq!(validated_verifier_pids(None).unwrap(), 64);
+    assert_eq!(validated_verifier_pids(Some("1536")).unwrap(), 1536);
+    assert!(validated_verifier_pids(Some("unlimited")).is_err());
+    assert!(validated_verifier_pids(Some("5000")).is_err());
+}
+
+fn validated_verifier_cpus(input: Option<&str>) -> Result<u32, VerifiedRustError> {
+    match input {
+        None | Some("1") => Ok(1),
+        Some("2") => Ok(2),
+        _ => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_CPUS; only 1 or 2 permitted".into(),
+        )),
+    }
+}
+
+pub(crate) fn selected_verifier_cpus() -> Result<u32, VerifiedRustError> {
+    match std::env::var("COMPOSER_VERIFIER_CPUS") {
+        Ok(value) => validated_verifier_cpus(Some(&value)),
+        Err(std::env::VarError::NotPresent) => validated_verifier_cpus(None),
+        Err(_) => Err(VerifiedRustError::Unsafe(
+            "COMPOSER_VERIFIER_CPUS must be UTF-8".into(),
+        )),
+    }
+}
+
+#[test]
+fn bounded_verifier_features_and_cpus() {
+    assert!(!validated_verifier_features(None).unwrap());
+    assert!(validated_verifier_features(Some("all")).unwrap());
+    assert!(validated_verifier_features(Some("none")).is_err());
+    assert_eq!(validated_verifier_cpus(None).unwrap(), 1);
+    assert_eq!(validated_verifier_cpus(Some("2")).unwrap(), 2);
+    assert!(validated_verifier_cpus(Some("4")).is_err());
+}
+
+fn validated_verifier_rustflags(
+    input: Option<&str>,
+) -> Result<(&'static str, &'static str), VerifiedRustError> {
+    match input {
+        None | Some("default") => Ok(("default", "-C debuginfo=0")),
+        Some("hyper-unstable") => Ok((
+            "hyper-unstable",
+            "-C debuginfo=0 --cfg hyper_unstable_tracing --cfg hyper_unstable_ffi",
+        )),
+        _ => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_RUSTFLAGS_PROFILE".into(),
+        )),
+    }
+}
+
+pub(crate) fn selected_verifier_rustflags_profile() -> Result<&'static str, VerifiedRustError> {
+    match std::env::var("COMPOSER_VERIFIER_RUSTFLAGS_PROFILE") {
+        Ok(value) => Ok(validated_verifier_rustflags(Some(&value))?.0),
+        Err(std::env::VarError::NotPresent) => Ok(validated_verifier_rustflags(None)?.0),
+        Err(_) => Err(VerifiedRustError::Unsafe(
+            "invalid COMPOSER_VERIFIER_RUSTFLAGS_PROFILE".into(),
+        )),
+    }
+}
+
+fn selected_verifier_rustflags() -> Result<&'static str, VerifiedRustError> {
+    match std::env::var("COMPOSER_VERIFIER_RUSTFLAGS_PROFILE") {
+        Ok(value) => Ok(validated_verifier_rustflags(Some(&value))?.1),
+        Err(std::env::VarError::NotPresent) => Ok(validated_verifier_rustflags(None)?.1),
+        Err(_) => Err(VerifiedRustError::Unsafe(
+            "invalid COMPOSER_VERIFIER_RUSTFLAGS_PROFILE".into(),
+        )),
+    }
+}
+
+#[test]
+fn verifier_rustflags_are_bounded() {
+    assert_eq!(validated_verifier_rustflags(None).unwrap().0, "default");
+    assert!(validated_verifier_rustflags(Some("--cfg malicious")).is_err());
+    assert!(
+        validated_verifier_rustflags(Some("hyper-unstable"))
+            .unwrap()
+            .1
+            .contains("hyper_unstable_ffi")
+    );
+}
+
+fn docker_build_internal(
+    staged: &Path,
+    results: &Path,
+    registry: Option<&Path>,
+    git_cache: Option<&Path>,
+    image_id: &str,
+    container_user: &str,
+    scope: VerifierTestScope<'_>,
+) -> Result<String, VerifiedRustError> {
+    let contract_focused = scope.contract_focused;
+    let workspace_member_package = scope.member_package;
+    // A requested gVisor runtime is mandatory, never best-effort.
+    let requested_runtime = selected_verifier_runtime()?;
+    // Fixed, compiler-owned scripts. Explicitly opt in to testing only library
+    // and independent integration contracts when third-party benchmark targets
+    // cannot run in the pinned stable-Rust, resource-bounded verifier. Default
+    // remains all-targets; do not silently downgrade failed verification.
+    const SCRIPT_ALL: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
+    const SCRIPT_ALL_FEATURES: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets --all-features >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets --all-features; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
+    const SCRIPT_CONTRACT: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --lib --tests >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --lib --tests; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
+    // The fixed -p selector runs the selected member's test contract.
+    // No user-controlled shell source is evaluated; the package comes from
+    // Cargo's parsed, bounded package.name field and a quoted env var.
+    // The source archive was prefetched into the explicitly selected image at
+    // build time. Its COMMIT marker is checked before the normal, complete
+    // all-features/all-targets Rust test run. Never grant runtime network.
+    // Syn's upstream WalkDir does not traverse a symlink used as the corpus
+    // root: it would try to read that link as a file and fail IsADirectory.
+    // Present actual directories but link the immutable preloaded source files,
+    // avoiding a second large copy into the bounded /work tmpfs.
+    const SCRIPT_SYN_RUST_SOURCE: &str = "set -eu; cp -R /input/. /work/; test \"$(cat /opt/composer-syn-rust-source/COMMIT)\" = b6839f4d0e2bd63b960bbff8619c6fdea27d81e5; mkdir -p /work/tests; test ! -e /work/tests/rust; mkdir /work/tests/rust; cp -Rs /opt/composer-syn-rust-source/. /work/tests/rust/; test -d /work/tests/rust; test ! -L /work/tests/rust; test -f /work/tests/rust/compiler/rustc_ast/src/lib.rs; if cargo test --locked --offline --all-targets --all-features >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets --all-features; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
+    const SCRIPT_MEMBER: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets -p \"$COMPOSER_VERIFIER_PACKAGE\" >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets -p \"$COMPOSER_VERIFIER_PACKAGE\"; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2 -p \"$COMPOSER_VERIFIER_PACKAGE\"; cp Cargo.lock /results/Cargo.lock";
+    // This is the same independently verified member integration and
+    // full test scope, with Cargo's own all-features switch explicitly selected.
+    const SCRIPT_MEMBER_ALL_FEATURES: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets --all-features -p \"$COMPOSER_VERIFIER_PACKAGE\" >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets --all-features -p \"$COMPOSER_VERIFIER_PACKAGE\"; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2 -p \"$COMPOSER_VERIFIER_PACKAGE\"; cp Cargo.lock /results/Cargo.lock";
+    let all_features = selected_verifier_features()?;
+    let is_syn_test_image = selected_verifier_image()? == RUSTC_DEV_IMAGE;
+    let script = if is_syn_test_image {
+        if workspace_member_package.is_some() || contract_focused || !all_features {
+            return Err(VerifiedRustError::Unsafe(
+                "pinned Syn source verifier requires root-package all-features/all-targets scope"
+                    .into(),
+            ));
+        }
+        SCRIPT_SYN_RUST_SOURCE
+    } else if workspace_member_package.is_some() {
+        if contract_focused {
+            return Err(VerifiedRustError::Unsafe(
+                "workspace member verifier cannot exclude binary or benchmark test targets".into(),
+            ));
+        }
+        if all_features {
+            SCRIPT_MEMBER_ALL_FEATURES
+        } else {
+            SCRIPT_MEMBER
+        }
+    } else {
+        match (contract_focused, all_features) {
+            (false, true) => SCRIPT_ALL_FEATURES,
+            (true, false) => SCRIPT_CONTRACT,
+            (false, false) => SCRIPT_ALL,
+            (true, true) => {
+                return Err(VerifiedRustError::Unsafe(
+                    "all-features with contract-focused scope is unsupported".into(),
+                ));
+            }
+        }
+    };
+    let memory_mb = selected_verifier_memory_mb()?;
+    let memory_limit = format!("--memory={memory_mb}m");
+    let cpu_limit = format!("--cpus={}", selected_verifier_cpus()?);
+    let pids_limit = format!("--pids-limit={}", selected_verifier_pids()?);
+    let rustflags_arg = format!("--env=RUSTFLAGS={}", selected_verifier_rustflags()?);
+    let work_tmpfs = format!("--tmpfs=/work:rw,nosuid,nodev,exec,mode=1777,size={memory_mb}m");
     let name = format!("composer-verify-{}", Uuid::new_v4().simple());
     let mut cmd = Command::new("docker");
     cmd.args([
@@ -1035,26 +1502,44 @@ fn docker_build(
         "--read-only",
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
-        "--pids-limit=64",
-        "--memory=1024m",
-        "--cpus=1",
+        &pids_limit,
+        &memory_limit,
+        &cpu_limit,
         "--user",
         container_user,
         "--workdir=/work",
         "--tmpfs=/tmp:rw,nosuid,nodev,mode=1777,size=256m",
-        "--tmpfs=/work:rw,nosuid,nodev,exec,mode=1777,size=1024m",
+        &work_tmpfs,
         "--log-driver=local",
         "--log-opt=max-size=5m",
         "--log-opt=max-file=2",
         "--env=CARGO_HOME=/tmp/cargo",
         "--env=CARGO_NET_OFFLINE=true",
         "--env=CARGO_BUILD_JOBS=1",
-        "--env=RUSTFLAGS=-C debuginfo=0",
+        &rustflags_arg,
         "--mount",
         &mount_arg(staged, "/input", true)?,
         "--mount",
         &mount_arg(results, "/results", false)?,
     ]);
+    if let Some(package) = workspace_member_package {
+        if package.len() > 80
+            || package.is_empty()
+            || !package
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err(VerifiedRustError::Unsafe(
+                "invalid Cargo workspace member package selector".into(),
+            ));
+        }
+        cmd.arg(format!("--env=COMPOSER_VERIFIER_PACKAGE={package}"));
+    }
+    if let Some(runtime) = requested_runtime {
+        // Docker must recognize runsc; if unavailable, docker run fails closed.
+        // This does not mutate daemon configuration or select a weaker fallback.
+        cmd.arg(format!("--runtime={runtime}"));
+    }
     if let Some(registry) = registry {
         let path = registry.canonicalize()?;
         let valid_cargo_registry = path.file_name().is_some_and(|name| name == "registry")
@@ -1075,13 +1560,33 @@ fn docker_build(
         cmd.arg("--mount")
             .arg(mount_arg(&path, "/tmp/cargo/registry", true)?);
     }
-    cmd.args(["--entrypoint", "sh", image_id, "-c", SCRIPT]);
+    if let Some(git_cache) = git_cache {
+        let path = git_cache.canonicalize()?;
+        let valid_cargo_git = path.file_name().is_some_and(|name| name == "git")
+            && path.parent().is_some_and(|parent| {
+                parent.file_name().is_some_and(|name| name == ".cargo")
+                    || std::env::var_os("CARGO_HOME").is_some_and(|home| parent == Path::new(&home))
+            });
+        if !valid_cargo_git
+            || !path.is_dir()
+            || fs::symlink_metadata(&path)?.file_type().is_symlink()
+        {
+            return Err(VerifiedRustError::Unsafe(
+                "Git cache mount must be a regular Cargo git directory under CARGO_HOME".into(),
+            ));
+        }
+        // Cargo's fetched DB/checkouts contain Git commits, not Cargo
+        // credentials or a writable dependency cache. Offline is mandatory.
+        cmd.arg("--mount")
+            .arg(mount_arg(&path, "/tmp/cargo/git", true)?);
+    }
+    cmd.args(["--entrypoint", "sh", image_id, "-c", script]);
     let launched = cmd
         .output()
         .map_err(|err| VerifiedRustError::Docker(format!("Docker CLI unavailable: {err}")))?;
     if !launched.status.success() {
         return Err(VerifiedRustError::Docker(format!(
-            "Docker could not start its restricted container (image {DEFAULT_IMAGE} must exist locally): {}",
+            "Docker could not start its restricted container (selected image must exist locally): {}",
             String::from_utf8_lossy(&launched.stderr)
                 .chars()
                 .take(2000)
@@ -1090,11 +1595,13 @@ fn docker_build(
     }
 
     let started = Instant::now();
+    let timeout = Duration::from_secs(selected_verifier_timeout_secs()?);
     let result = loop {
-        if started.elapsed() > TIMEOUT {
-            break Err(VerifiedRustError::Docker(
-                "isolated build exceeded 240-second limit".into(),
-            ));
+        if started.elapsed() > timeout {
+            break Err(VerifiedRustError::Docker(format!(
+                "isolated build exceeded {}-second limit",
+                timeout.as_secs()
+            )));
         }
         let status = Command::new("docker")
             .args([
@@ -1141,12 +1648,139 @@ fn docker_build(
     let _ = Command::new("docker").args(["rm", "-f", &name]).output();
     let logs: String = logs.chars().take(MAX_LOG_CHARS).collect();
     result.map_err(|err| VerifiedRustError::Docker(format!("{err}\nContainer output:\n{logs}")))?;
-    Ok(logs)
+    Ok(format!(
+        "COMPOSER_DOCKER_RUNTIME={}\n{logs}",
+        requested_runtime.unwrap_or("docker-default")
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_verifier_memory_cannot_disable_resource_limits() {
+        assert_eq!(validated_verifier_memory_mb(None).unwrap(), 1024);
+        for (value, expected) in [("1024", 1024), ("2048", 2048), ("4096", 4096)] {
+            assert_eq!(validated_verifier_memory_mb(Some(value)).unwrap(), expected);
+        }
+        for invalid in ["", "0", "512", "8192", "1g", "4096 ", "-1", "999999"] {
+            assert!(
+                validated_verifier_memory_mb(Some(invalid)).is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn external_gvisor_runtime_selection_refuses_unknown_or_empty_fallbacks() {
+        assert_eq!(validated_verifier_runtime(None).unwrap(), None);
+        assert_eq!(
+            validated_verifier_runtime(Some("runsc")).unwrap(),
+            Some("runsc")
+        );
+        for invalid in ["", "runc", "kata", "runsc --privileged", " runsc", "RUNSC"] {
+            assert!(
+                validated_verifier_runtime(Some(invalid)).is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
+    /// Unit-level constraint gate: this deliberately bypasses wiring because
+    /// the current source-import closure rejects external imports earlier.
+    /// A green Cargo test elsewhere does not prove incompatible versions agree.
+    #[test]
+    fn rejects_disjoint_semver_lockfile_in_dependent_target() {
+        let root = std::env::temp_dir().join(format!("composer-heldout-semver-{}", Uuid::new_v4()));
+        let capsule = root.join("capsule");
+        let target = root.join("target");
+        fs::create_dir_all(capsule.join("context/manifests")).unwrap();
+        fs::create_dir_all(capsule.join("source/src")).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        fs::write(
+            capsule.join("source/src/lib.rs"),
+            "use semver::Version;\npub fn parse_major(value: &str) -> u64 { Version::parse(value).map(|v| v.major).unwrap_or(0) }\n",
+        ).unwrap();
+        fs::write(
+            capsule.join("context/manifests/Cargo.toml"),
+            "[package]\nname='synthetic_source'\nversion='0.1.0'\n[dependencies]\nsemver='1'\n",
+        )
+        .unwrap();
+        let target_manifest = target.join("Cargo.toml");
+        let target_lock = target.join("Cargo.lock");
+        let incompatible = "[package]\nname='synthetic_target'\nversion='0.1.0'\n[dependencies]\nsemver='=0.11.0'\n";
+        fs::write(&target_manifest, incompatible).unwrap();
+        fs::write(
+            &target_lock,
+            "version = 4\n[[package]]\nname = 'semver'\nversion = '0.11.0'\n",
+        )
+        .unwrap();
+        let manifest = CapsuleManifest {
+            schema_version: 1,
+            capsule_id: "semver-fixture".into(),
+            capability_id: "semver".into(),
+            description: "Version conflict contract".into(),
+            created_at_unix: 0,
+            source_repository_url: None,
+            source_commit_sha: None,
+            source_tree_sha: None,
+            dependency_closure_strategy: "test".into(),
+            files: vec![
+                composer_intelligence::CapsuleFile {
+                    source_path: Some(PathBuf::from("Cargo.toml")),
+                    capsule_path: "context/manifests/Cargo.toml".into(),
+                    file_kind: "dependency_manifest".into(),
+                    size_bytes: 0,
+                    sha256: String::new(),
+                },
+                composer_intelligence::CapsuleFile {
+                    source_path: Some(PathBuf::from("src/lib.rs")),
+                    capsule_path: "source/src/lib.rs".into(),
+                    file_kind: "source".into(),
+                    size_bytes: 0,
+                    sha256: String::new(),
+                },
+            ],
+            included_source_files: vec![PathBuf::from("src/lib.rs")],
+            included_symbol_ids: vec![],
+            external_or_unresolved_imports: vec![],
+            unfollowed_symbol_references: vec![],
+            license_evidence_files: vec![],
+            license_review_required: true,
+            boundary_warnings: vec![],
+        };
+        let before_manifest = fs::read(&target_manifest).unwrap();
+        let before_lock = fs::read(&target_lock).unwrap();
+        let result =
+            verify_locked_source_constraints(&manifest, &capsule, &target_manifest, &target_lock);
+        match result {
+            Err(VerifiedRustError::Dependency(message)) => {
+                assert!(message.contains("incompatible with source"), "{message}");
+                assert!(message.contains("semver"), "{message}");
+            }
+            other => panic!("disjoint dependency constraints were not rejected: {other:?}"),
+        }
+        assert_eq!(fs::read(&target_manifest).unwrap(), before_manifest);
+        assert_eq!(fs::read(&target_lock).unwrap(), before_lock);
+
+        // Positive control: both source and target requirements admit 1.0.28.
+        fs::write(
+            &target_manifest,
+            "[package]\nname='synthetic_target'\nversion='0.1.0'\n[dependencies]\nsemver='=1.0.28'\n",
+        ).unwrap();
+        fs::write(
+            &target_lock,
+            "version = 4\n[[package]]\nname = 'semver'\nversion = '1.0.28'\n",
+        )
+        .unwrap();
+        let reconciled =
+            verify_locked_source_constraints(&manifest, &capsule, &target_manifest, &target_lock)
+                .unwrap();
+        assert_eq!(reconciled.len(), 1);
+        assert!(reconciled[0].contains("1.0.28"));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn preserves_target_manifest_and_adds_only_matching_version_deps() {

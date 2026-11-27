@@ -1,0 +1,38 @@
+name: Pinned Git third-party API adapter acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/pinned-git-api-adapter.yml
+      - crates/integration/src/reviewed_upstream_adapter.rs
+      - crates/integration/src/upstream_git.rs
+      - crates/integration/src/lib.rs
+      - apps/cli/src/main.rs
+      - tests/test_pinned_git_string_adapter_public.py
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-git-adapter:
+    if: github.repository == 'KUNDURUHIMANEESHREDDY/composer' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Prepare restricted Docker verifier
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
+      - name: Reuse a checked Git dependency and compile a reviewed String adapter in Docker
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -u tests/test_pinned_git_string_adapter_public.py 2>&1 | tee git-string-adapter.log
+      - name: Preserve passing and failing evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
+        with:
+          name: third-party-git-api-adapter-evidence
+          path: git-string-adapter.log
+          if-no-files-found: warn

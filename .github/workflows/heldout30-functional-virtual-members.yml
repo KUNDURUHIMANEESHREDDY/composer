@@ -1,0 +1,81 @@
+name: Frozen virtual-workspace member functional integration
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/heldout30-functional-virtual-members.yml
+      - tests/test_heldout30_functional_anyhow.py
+      - tests/test_heldout30_functional_virtual_members.py
+      - tests/heldout30_pins.json
+      - crates/integration/**
+      - Cargo.lock
+
+permissions:
+  contents: read
+
+jobs:
+  selected-member:
+    name: ${{ matrix.case }} / member all_targets
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: rustls
+            pids: 64
+            features: default
+            repository: rustls/rustls
+          - case: tower
+            pids: 64
+            features: default
+            repository: tower-rs/tower
+          - case: futures
+            pids: 1536
+            features: all
+            repository: rust-lang/futures-rs
+          - case: tracing
+            pids: 64
+            features: default
+            repository: tokio-rs/tracing
+          - case: petgraph
+            pids: 64
+            features: default
+            repository: petgraph/petgraph
+          - case: rkyv
+            pids: 64
+            features: default
+            repository: rkyv/rkyv
+          - case: serde
+            pids: 64
+            features: default
+            repository: serde-rs/serde
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Preload digest-pinned stable Docker verifier
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
+      - name: Three selected member full-scope integrations and wrong behavior rejection
+        shell: bash
+        env:
+          COMPOSER_VERIFIER_MEMORY_MB: '4096'
+          COMPOSER_VERIFIER_FEATURES: ${{ matrix.features }}
+          COMPOSER_VERIFIER_PIDS: ${{ matrix.pids }}
+        run: |
+          set -euo pipefail
+          python3 -u tests/test_heldout30_functional_virtual_members.py \
+            --target-case ${{ matrix.case }} 2>&1 | tee heldout-virtual-member.log
+          grep -q 'PASS held-out target ${{ matrix.repository }} functional trial 3/3' heldout-virtual-member.log
+          grep -q '"verification_scope": "selected_workspace_member_all_targets"' heldout-virtual-member.log
+          grep -q 'PASS wrong-function control rejected, no publication' heldout-virtual-member.log
+          grep -q 'EVIDENCE_JSON ' heldout-virtual-member.log
+      - name: Retain both successful and failed evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
+        with:
+          name: composer-heldout-virtual-${{ matrix.case }}
+          path: heldout-virtual-member.log
+          if-no-files-found: warn
+          retention-days: 14

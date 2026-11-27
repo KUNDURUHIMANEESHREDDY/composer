@@ -3,9 +3,11 @@ use std::{error::Error, fs, net::SocketAddr, path::PathBuf};
 use clap::{Parser, Subcommand};
 use composer_core::ProjectSpec;
 use composer_integration::{
-    BatchRustOptions, IntegrationOptions, RustWiringOptions, VerifiedRustOptions,
-    apply_integration, compose_verified_rust, compose_verified_rust_batch,
-    discover_rust_api_contracts, plan_integration, verify_capsule, wire_rust_module,
+    BatchRustOptions, ExternalDiscoveryOptions, IntegrationOptions, RustWiringOptions,
+    UpstreamCrateOptions, UpstreamGitOptions, UpstreamRecoveryCandidate, UpstreamRecoveryOptions,
+    VerifiedRustOptions, apply_integration, compose_verified_rust, compose_verified_rust_batch,
+    discover_external_rust, discover_rust_api_contracts, plan_integration, recover_upstream_crate,
+    verify_capsule, verify_upstream_crate, verify_upstream_git, wire_rust_module,
 };
 use composer_intelligence::{
     CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
@@ -149,6 +151,148 @@ enum Command {
         /// Pre-existing independent test that calls the target stub.
         #[arg(long = "contract-test")]
         contract_test: Option<PathBuf>,
+    },
+    /// Reuse a published crate from an independently reviewed public Rust repository.
+    /// Cargo resolves exact registry artifacts; Composer never regenerates upstream source.
+    VerifyExternalRustCrate {
+        /// Original standalone Cargo library; never modified.
+        target: PathBuf,
+        /// New output directory, published only after isolated offline tests pass.
+        #[arg(long)]
+        output: PathBuf,
+        /// Published crates.io package name.
+        #[arg(long)]
+        package: String,
+        /// Exact published version (not a semver range).
+        #[arg(long)]
+        version: String,
+        /// Existing upstream public function to re-export.
+        #[arg(long)]
+        public_symbol: String,
+        /// Target-visible API name referenced by the contract test.
+        #[arg(long)]
+        target_alias: String,
+        /// Existing independent target-owned tests/<name>.rs contract.
+        #[arg(long)]
+        contract_test: PathBuf,
+        /// Pre-provisioned Cargo registry; mounted read-only inside Docker.
+        #[arg(long)]
+        registry_cache: PathBuf,
+        /// Human-reviewed public upstream GitHub repository URL (provenance claim).
+        #[arg(long)]
+        upstream_repository: String,
+        /// Human-reviewed 40-character commit SHA (not proven to match crate artifact).
+        #[arg(long)]
+        upstream_commit: String,
+        /// Confirm independent license/source review; not legal clearance.
+        #[arg(long)]
+        license_reviewed: bool,
+    },
+    /// Reuse an exact pinned Git commit from an existing public Rust repository.
+    /// Executes only in Composer's offline Docker verifier; no source regeneration.
+    VerifyExternalGitRust {
+        /// Original standalone target Cargo library (never modified).
+        target: PathBuf,
+        /// New output directory, published only after tests pass.
+        #[arg(long)]
+        output: PathBuf,
+        /// Independently reviewed clean Git source checkout.
+        #[arg(long)]
+        upstream_checkout: PathBuf,
+        /// Canonical public GitHub HTTPS repository URL.
+        #[arg(long)]
+        upstream_repository: String,
+        /// Exact reviewed 40-digit Git commit (not branch/tag).
+        #[arg(long)]
+        upstream_commit: String,
+        /// Upstream Cargo package name.
+        #[arg(long)]
+        package: String,
+        /// Existing upstream public symbol, e.g. jaro or str::jaro.
+        #[arg(long)]
+        public_symbol: String,
+        /// Target API name called by independent tests.
+        #[arg(long)]
+        target_alias: String,
+        /// Optional reviewed target API, e.g. transliterate(String)->String.
+        #[arg(long)]
+        target_signature: Option<String>,
+        /// Infer an owned-String adapter from a single public &str -> String function in pinned Git source.
+        /// Requires independent source review and behavioral tests; not semantic inference.
+        #[arg(long, conflicts_with = "target_signature")]
+        infer_owned_string_signature: bool,
+        /// Existing tests/<name>.rs independently authored contract.
+        #[arg(long)]
+        contract_test: PathBuf,
+        /// Pre-provisioned local Cargo registry directory.
+        #[arg(long)]
+        registry_cache: PathBuf,
+        /// Pre-provisioned local Cargo git/ directory only.
+        #[arg(long)]
+        git_cache: PathBuf,
+        /// Assert independent license/source review; not legal clearance.
+        #[arg(long)]
+        license_reviewed: bool,
+        /// Optional exact trusted OpenPGP signer fingerprint. Reject unsigned
+        /// or untrusted commits, using the existing git verify-commit command.
+        #[arg(long)]
+        require_upstream_signer_fingerprint: Option<String>,
+        /// Explicitly run library + integration tests, excluding external
+        /// benchmarks and binary targets. Full all-targets remains default.
+        #[arg(long)]
+        contract_focused: bool,
+        /// Explicitly add a Cargo library facade to a genuine binary-only target.
+        #[arg(long)]
+        allow_binary_library_adapter: bool,
+        /// Explicit member subdirectory under a virtual Cargo workspace.
+        #[arg(long, conflicts_with = "allow_binary_library_adapter")]
+        target_member_dir: Option<String>,
+    },
+    /// Discover independent existing Rust capabilities via Cargo search/info
+    /// and Composer's existing Rust analyzer. Read-only, no upstream code execution.
+    DiscoverExternalRust {
+        /// Public capability query, e.g. jaro or levenshtein.
+        query: String,
+        /// Target function name required in upstream source, e.g. jaro.
+        #[arg(long)]
+        function: String,
+        /// Pre-existing Cargo registry directory, e.g. ~/.cargo/registry.
+        #[arg(long)]
+        registry_cache: PathBuf,
+        /// Exclude this GitHub owner (repeatable; include your own account).
+        #[arg(long = "exclude-owner")]
+        exclude_owners: Vec<String>,
+        /// Maximum external candidates to inspect and suggest (1-5).
+        #[arg(long, default_value_t = 5)]
+        limit: usize,
+        /// New candidate JSON path compatible with recover-external-rust-crate.
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Try 1-5 reviewed external package candidates in preference order.
+    /// Resolves cached semver versions, falls back after incorrect behavior,
+    /// and isolates existing dependency conflicts under Cargo aliases.
+    RecoverExternalRustCrate {
+        /// Original target Cargo project. Never modified.
+        target: PathBuf,
+        /// New verified output directory.
+        #[arg(long)]
+        output: PathBuf,
+        /// JSON array of reviewed external package candidates.
+        #[arg(long)]
+        candidates_json: PathBuf,
+        /// Target-visible function that the behavioral contract exercises.
+        #[arg(long)]
+        target_alias: String,
+        /// Existing independent target-owned test in tests/<name>.rs.
+        #[arg(long)]
+        contract_test: PathBuf,
+        /// Pre-populated crates.io registry cache, never fetched by Composer.
+        #[arg(long)]
+        registry_cache: PathBuf,
+        /// Confirm independent license/source review for all candidates.
+        #[arg(long)]
+        license_reviewed: bool,
     },
     /// Verify 2-5 distinct Rust Feature Capsules in sequence, with rollback on any failure.
     VerifyRustBatch {
@@ -327,6 +471,142 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 contract_test,
             })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::VerifyExternalRustCrate {
+            target,
+            output,
+            package,
+            version,
+            public_symbol,
+            target_alias,
+            contract_test,
+            registry_cache,
+            upstream_repository,
+            upstream_commit,
+            license_reviewed,
+        } => {
+            let result = verify_upstream_crate(&UpstreamCrateOptions {
+                target_root: target,
+                output_root: output,
+                package,
+                version,
+                public_symbol,
+                target_alias,
+                dependency_alias: None,
+                contract_test,
+                registry_cache,
+                upstream_repository,
+                upstream_commit,
+                license_reviewed,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::VerifyExternalGitRust {
+            target,
+            output,
+            upstream_checkout,
+            upstream_repository,
+            upstream_commit,
+            package,
+            public_symbol,
+            target_alias,
+            target_signature,
+            infer_owned_string_signature,
+            contract_test,
+            registry_cache,
+            git_cache,
+            license_reviewed,
+            require_upstream_signer_fingerprint,
+            contract_focused,
+            allow_binary_library_adapter,
+            target_member_dir,
+        } => {
+            let result = verify_upstream_git(&UpstreamGitOptions {
+                target_root: target,
+                output_root: output,
+                upstream_checkout,
+                upstream_repository,
+                upstream_commit,
+                package,
+                public_symbol,
+                target_alias,
+                target_signature,
+                infer_owned_string_signature,
+                contract_test,
+                registry_cache,
+                git_cache,
+                license_reviewed,
+                required_signer_fingerprint: require_upstream_signer_fingerprint,
+                contract_focused,
+                allow_binary_library_adapter,
+                target_member_dir,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::DiscoverExternalRust {
+            query,
+            function,
+            registry_cache,
+            exclude_owners,
+            limit,
+            output,
+        } => {
+            let report = discover_external_rust(&ExternalDiscoveryOptions {
+                query,
+                function_name: function,
+                exclude_owners,
+                registry_cache,
+                max_candidates: limit,
+            })?;
+            if report.candidates.is_empty() {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                return Err(
+                    "no statically supported external function candidates; nothing published"
+                        .into(),
+                );
+            }
+            // Recovery reads the raw candidate array; never overwrite a prior review.
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&output)?;
+            use std::io::Write;
+            file.write_all(&serde_json::to_vec_pretty(&report.candidates)?)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::RecoverExternalRustCrate {
+            target,
+            output,
+            candidates_json,
+            target_alias,
+            contract_test,
+            registry_cache,
+            license_reviewed,
+        } => {
+            let metadata = fs::symlink_metadata(&candidates_json)?;
+            if !metadata.is_file()
+                || metadata.file_type().is_symlink()
+                || metadata.len() > 64 * 1024
+            {
+                return Err(
+                    "candidate list must be a regular JSON file no larger than 64 KiB".into(),
+                );
+            }
+            let candidates: Vec<UpstreamRecoveryCandidate> =
+                serde_json::from_slice(&fs::read(candidates_json)?)?;
+            let report = recover_upstream_crate(&UpstreamRecoveryOptions {
+                target_root: target,
+                output_root: output,
+                target_alias,
+                contract_test,
+                registry_cache,
+                candidates,
+                license_reviewed,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if !report.completed {
+                return Err("no external candidate passed independent verification; see recovery JSON report".into());
+            }
         }
         Command::VerifyRustBatch {
             capsules,

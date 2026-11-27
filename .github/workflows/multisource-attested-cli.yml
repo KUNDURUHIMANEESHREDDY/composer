@@ -1,0 +1,159 @@
+name: Multi-upstream Git acceptance and attested Windows portable CLI
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/multisource-attested-cli.yml
+      - tests/test_multisource_git_only_public.py
+      - crates/integration/**
+      - apps/cli/**
+      - Cargo.lock
+  push:
+    branches:
+      - feat/multisource-attested-windows-cli
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-unpublished-sources:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Prepare existing offline verifier
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
+      - name: Verify 3 existing upstream implementations across 2 Git-only repositories and one verified target
+        run: python3 -u tests/test_multisource_git_only_public.py
+
+  windows-build-attest:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - name: Install native Rust compiler
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Validate committed lockfile and formatting
+        shell: pwsh
+        run: |
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Committed lockfile cannot resolve" }
+          cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw "Rust format check failed" }
+      - name: Generate source SPDX SBOM using pinned upstream Syft
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # pinned upstream v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: composer-source.spdx.json
+          syft-version: v1.57.2
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Test native Windows workspace using committed lockfile
+        run: cargo test --workspace --all-targets --locked
+      - name: Compile portable release CLI from locked source
+        run: cargo build -p composer-cli --release --locked
+      - name: Bundle existing CLI as portable Windows ZIP with executable checksum
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/composer-windows-x64 | Out-Null
+          Copy-Item target/release/composer.exe dist/composer-windows-x64/composer.exe
+          if (-not (Test-Path composer-source.spdx.json)) { throw "Source SBOM missing" }
+          Copy-Item composer-source.spdx.json dist/composer-windows-x64/composer-source.spdx.json
+          $version = & dist/composer-windows-x64/composer.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "Packaged CLI failed to start" }
+          Set-Content dist/composer-windows-x64/BUILD-INFO.txt -Value @(
+            "Artifact: Composer portable Windows x64 CLI",
+            "Version: $version",
+            "Commit: $env:GITHUB_SHA",
+            "Rust: $(rustc --version)",
+            "Source: $env:GITHUB_REPOSITORY",
+            "Portable ZIP only; this is not an MSI or an installed application."
+          )
+          $digest = (Get-FileHash dist/composer-windows-x64/composer.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content dist/composer-windows-x64/composer.exe.sha256 -Value $digest
+          Compress-Archive -Path dist/composer-windows-x64 -DestinationPath dist/composer-windows-x64.zip -Force
+          if (-not (Test-Path dist/composer-windows-x64.zip)) { throw "ZIP missing" }
+          Write-Output "PASS native release executable and portable archive"
+      - name: GitHub Sigstore-backed build artifact attestation
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # pinned upstream
+        with:
+          subject-path: dist/composer-windows-x64.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
+        with:
+          name: composer-windows-x64-portable
+          path: dist/composer-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-fresh-extract-smoke:
+    needs: windows-build-attest
+    runs-on: windows-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Reject invalid attestation identities before using release artifacts
+        shell: pwsh
+        run: ./tests/test_windows_artifact_attestation_policy.ps1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # pinned upstream
+        with:
+          name: composer-windows-x64-portable
+          path: input
+      - name: Attestation, SHA256 and extracted CLI on separate clean Windows runner
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = Join-Path $PWD "input/composer-windows-x64.zip"
+          if (-not (Test-Path $zip)) { throw "Missing ZIP" }
+          & ./scripts/verify-github-build-attestation.ps1 `
+            -ArtifactPath $zip `
+            -WorkflowFile 'multisource-attested-cli.yml' `
+            -Repository $env:GITHUB_REPOSITORY `
+            -Commit $env:GITHUB_SHA `
+            -SourceRef $env:GITHUB_REF `
+            -RunId $env:GITHUB_RUN_ID `
+            -RunAttempt $env:GITHUB_RUN_ATTEMPT
+          Expand-Archive -Path $zip -DestinationPath extracted
+          $folder = Join-Path $PWD "extracted/composer-windows-x64"
+          $exe = Join-Path $folder "composer.exe"
+          if (-not (Test-Path $exe)) { throw "Missing extracted CLI" }
+          $buildInfo = Join-Path $folder "BUILD-INFO.txt"
+          if (-not (Test-Path $buildInfo)) { throw "Missing signed-archive build manifest" }
+          $sourceCommit = "Commit: $env:GITHUB_SHA"
+          if (-not (Select-String -Path $buildInfo -SimpleMatch -Pattern $sourceCommit -Quiet)) {
+            throw "Attested ZIP build provenance does not match the current workflow commit"
+          }
+          $sbom = Join-Path $folder "composer-source.spdx.json"
+          if (-not (Test-Path $sbom)) { throw "Attested ZIP is missing source SBOM" }
+          $bill = Get-Content $sbom -Raw | ConvertFrom-Json
+          if ($bill.spdxVersion -ne "SPDX-2.3" -or @($bill.packages).Count -lt 1) {
+            throw "Source SBOM is not valid SPDX 2.3 with identified packages"
+          }
+          $expected = (Get-Content (Join-Path $folder "composer.exe.sha256") -Raw).Trim().ToLowerInvariant()
+          $actual = (Get-FileHash -Path $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw "Executable digest mismatch" }
+          & $exe --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "CLI --help failed" }
+          & $exe --version | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "CLI --version failed" }
+          foreach ($cmd in @("discover-external-rust", "verify-external-git-rust", "recover-external-rust-crate")) {
+            & $exe $cmd --help | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Missing CLI command $cmd" }
+          }
+          Write-Output "PASS clean Windows extraction, attestation, checksum and CLI commands"

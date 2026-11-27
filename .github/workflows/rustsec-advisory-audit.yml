@@ -1,0 +1,28 @@
+name: Third-party RustSec dependency security advisory scan
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/rustsec-advisory-audit.yml
+      - Cargo.lock
+      - Cargo.toml
+      - crates/**/Cargo.toml
+      - apps/**/Cargo.toml
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  rustsec-audit:
+    if: github.repository == 'KUNDURUHIMANEESHREDDY/composer' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact Composer source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - name: Scan Cargo.lock with externally maintained RustSec cargo-audit
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

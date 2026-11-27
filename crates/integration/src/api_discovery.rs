@@ -211,6 +211,51 @@ pub fn discover_rust_api_contracts(
     })
 }
 
+/// Infer only a top-level, public function with borrowed &str inputs and a
+/// supported owned scalar/boolean/String result using the existing Tree-sitter
+/// Rust parser. This is type-shape inference, never semantic equivalence;
+/// the caller explicitly selects the source symbol and target alias, and
+/// must supply independent behavioral tests before publishing.
+/// Methods, modules, generics, async, unsafe, attrs that alter function shape,
+/// and unsupported argument or return types fail closed.
+pub(crate) fn infer_owned_string_target_signature(
+    pinned_source: &str,
+    upstream_symbol: &str,
+    target_alias: &str,
+) -> Option<String> {
+    if !identifier(upstream_symbol) || !identifier(target_alias) {
+        return None;
+    }
+    let mut matches = scan_public_functions(pinned_source, Path::new("src/lib.rs"), "")
+        .into_iter()
+        .filter(|candidate| {
+            candidate.name == upstream_symbol
+                && matches!(
+                    candidate.result.as_str(),
+                    "String"
+                        | "bool"
+                        | "f32"
+                        | "f64"
+                        | "u8"
+                        | "u16"
+                        | "u32"
+                        | "u64"
+                        | "i8"
+                        | "i16"
+                        | "i32"
+                        | "i64"
+                )
+                && !candidate.parameters.is_empty()
+                && candidate.parameters.iter().all(|ty| ty == "&str")
+        });
+    let candidate = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    let inputs = vec!["String"; candidate.parameters.len()].join(",");
+    Some(format!("{target_alias}({inputs})->{}", candidate.result))
+}
+
 fn rust_tree(source: &str) -> Option<Tree> {
     let mut parser = Parser::new();
     parser
@@ -243,7 +288,14 @@ fn parse_function(node: Node<'_>, source: &str, file: &Path, module: &str) -> Op
     let prefix = source.get(node.start_byte()..name.start_byte())?.trim();
     // Conservative: do not infer across visibility, const/async/unsafe, ABI,
     // generics or attributes that alter calling conventions.
-    if prefix != "pub fn" {
+    if prefix != "pub fn"
+        || !source
+            .get(name.end_byte()..args.start_byte())?
+            .trim()
+            .is_empty()
+    {
+        // Reject type parameters and any syntax between name and arguments;
+        // no generic/source specialization may be inferred from a simple call.
         return None;
     }
     let name = name.utf8_text(source.as_bytes()).ok()?;
@@ -447,6 +499,62 @@ mod tests {
             source_path: name.into(),
             body_is_unimplemented: false,
         }
+    }
+
+    #[test]
+    fn infers_only_exact_upstream_borrowed_string_signatures() {
+        let source = r#"
+#[inline(always)]
+#[cfg(feature = "alloc")]
+pub fn deunicode(s: &str) -> String { s.to_owned() }
+pub fn combine(a: &str, b: &str) -> String { format!("{a}{b}") }
+pub fn similarity(a: &str, b: &str) -> f64 { if a == b { 1.0 } else { 0.0 } }
+pub fn equal(a: &str, b: &str) -> bool { a == b }
+pub fn byte_count(s: &str) -> u64 { s.len() as u64 }
+pub fn wrong(arg: u32) -> String { arg.to_string() }
+pub fn generic<T>(s: &str) -> String { s.to_owned() }
+pub fn reference(s: &str) -> &str { s }
+pub async fn delayed(s: &str) -> String { s.to_owned() }
+struct Internal;
+impl Internal { pub fn method(s: &str) -> String { s.to_owned() } }
+"#;
+        assert_eq!(
+            infer_owned_string_target_signature(source, "deunicode", "transliterate"),
+            Some("transliterate(String)->String".into())
+        );
+        assert_eq!(
+            infer_owned_string_target_signature(source, "combine", "concat"),
+            Some("concat(String,String)->String".into())
+        );
+        assert_eq!(
+            infer_owned_string_target_signature(source, "similarity", "ported_similarity"),
+            Some("ported_similarity(String,String)->f64".into())
+        );
+        assert_eq!(
+            infer_owned_string_target_signature(source, "equal", "is_equal"),
+            Some("is_equal(String,String)->bool".into())
+        );
+        assert_eq!(
+            infer_owned_string_target_signature(source, "byte_count", "bytes"),
+            Some("bytes(String)->u64".into())
+        );
+        for unsupported in [
+            "wrong",
+            "generic",
+            "reference",
+            "delayed",
+            "method",
+            "missing",
+            "deunicode;evil",
+        ] {
+            assert!(
+                infer_owned_string_target_signature(source, unsupported, "target").is_none(),
+                "{unsupported}"
+            );
+        }
+        assert!(
+            infer_owned_string_target_signature(source, "deunicode", "unsafe::target").is_none()
+        );
     }
 
     #[test]

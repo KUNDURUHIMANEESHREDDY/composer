@@ -1,0 +1,65 @@
+name: Held-out 30-repository static compatibility audit (NOT functional proof)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/heldout30-static.yml
+      - tests/heldout30_pins.json
+      - tests/test_heldout30_static.py
+      - tests/test_action_pins.py
+      - crates/intelligence/**
+      - crates/repository/**
+      - apps/cli/**
+      - Cargo.lock
+
+permissions:
+  contents: read
+
+jobs:
+  static-analysis:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Reject mutable GitHub Actions and invalid 30-repository cohort
+        run: |
+          python3 tests/test_action_pins.py
+          python3 tests/test_heldout30_static.py --lint
+      - name: Build Composer without invoking external repository code
+        run: cargo build -p composer-cli --release --locked
+      - name: Inspect 10 previously unseen, SHA-pinned public Rust repositories twice
+        run: |
+          python3 -u tests/test_heldout30_static.py --shard ${{ matrix.shard }} \
+            --cli target/release/composer \
+            --report evidence/heldout30-static-shard-${{ matrix.shard }}.json
+      - name: Retain machine-readable per-repository outcomes even on failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
+        with:
+          name: heldout30-static-shard-${{ matrix.shard }}
+          path: evidence/heldout30-static-shard-${{ matrix.shard }}.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  scope-gate:
+    if: always()
+    needs: static-analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Never misclassify static analysis as functional integration proof
+        shell: bash
+        run: |
+          echo "Static inspection status: ${{ needs.static-analysis.result }}"
+          echo "Functional integration count: 0/30 (not attempted)"
+          echo "Release approval: BLOCKED pending 30 target-owned behavioral contracts"
+          if [ "${{ needs.static-analysis.result }}" != "success" ]; then
+            echo "Static analysis itself also failed or was incomplete"
+            exit 1
+          fi

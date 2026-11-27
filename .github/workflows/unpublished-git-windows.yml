@@ -1,0 +1,58 @@
+name: Unpublished Git-only upstream acceptance
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/unpublished-git-windows.yml
+      - tests/test_unpublished_git_public.py
+      - crates/integration/**
+      - apps/cli/**
+  push:
+    branches:
+      - feat/unpublished-git-windows-acceptance
+    paths:
+      - .github/workflows/unpublished-git-windows.yml
+      - tests/test_unpublished_git_public.py
+      - crates/integration/**
+      - apps/cli/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-unpublished-source:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Prepare existing offline verifier
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
+      - name: Verify truly unpublished Git-only code in independent target
+        run: python3 -u tests/test_unpublished_git_public.py
+
+  windows-compiler-regression:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - name: Install stable Windows Rust compiler
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Verify Windows Rust format
+        run: cargo fmt --all -- --check
+      - name: Verify committed Cargo.lock resolves unchanged on clean Windows
+        run: cargo metadata --locked --format-version 1 --no-deps
+      - name: Verify workspace unit tests from clean Windows runner
+        run: cargo test --workspace --all-targets --locked
+      - name: Verify CLI supports both external import commands on Windows
+        shell: pwsh
+        run: |
+          cargo run -p composer-cli --locked -- --help | Out-File -Encoding utf8 cli-help.txt
+          $help = Get-Content cli-help.txt -Raw
+          if (-not $help.Contains("verify-external-git-rust") -or -not $help.Contains("discover-external-rust")) {
+            throw "Windows CLI missing external dependency reuse commands"
+          }
+          Write-Output "PASS Windows native Composer CLI and Rust unit regression"

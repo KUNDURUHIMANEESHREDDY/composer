@@ -14,6 +14,6 @@ composer-core.workspace = true
 composer-intelligence.workspace = true
 composer-integration.workspace = true
 composer-repository.workspace = true
-composer-api = { path = "../api" }
+composer-api = { path = "../api", version = "0.1.0" }
 serde_json.workspace = true
 tokio.workspace = true

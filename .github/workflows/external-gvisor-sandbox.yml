@@ -1,0 +1,59 @@
+name: External gVisor runsc sandbox acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/external-gvisor-sandbox.yml
+      - crates/integration/src/verified.rs
+      - scripts/install-pinned-gvisor.sh
+      - tests/test_pinned_git_string_adapter_public.py
+
+permissions:
+  contents: read
+
+jobs:
+  gvisor-runsc:
+    if: github.repository == 'KUNDURUHIMANEESHREDDY/composer' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Preload verifier image
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
+      - name: Install exact upstream gVisor bundle with reviewed release SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/install-pinned-gvisor.sh
+          cat gvisor-release-sha256.txt
+          cat gvisor-runsc-binary-sha256.txt
+      - name: Prove runsc launches the existing Rust image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --runtime=runsc --pull=never --network=none --read-only \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            rust:1.99-slim sh -c 'echo COMPOSER_GVISOR_SMOKE_OK'
+      - name: Execute third-party Git capability import through runsc, not runc
+        shell: bash
+        env:
+          COMPOSER_VERIFIER_RUNTIME: runsc
+        run: |
+          set -euo pipefail
+          python3 -u tests/test_pinned_git_string_adapter_public.py 2>&1 | tee gvisor-git-adapter-evidence.log
+          grep -q 'PASS pinned Git source/type adapter 3/3' gvisor-git-adapter-evidence.log
+          grep -q 'EVIDENCE_JSON' gvisor-git-adapter-evidence.log
+      - name: Preserve runtime identity and test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
+        with:
+          name: external-gvisor-runsc-verified-evidence
+          path: |
+            gvisor-version.txt
+            gvisor-release-sha256.txt
+            gvisor-runsc-binary-sha256.txt
+            docker-runtimes.json
+            gvisor-git-adapter-evidence.log
+          if-no-files-found: warn

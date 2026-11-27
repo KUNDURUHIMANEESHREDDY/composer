@@ -1,0 +1,56 @@
+name: Pinned nightly full-scope bitflags recovery
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/heldout30-functional-nightly.yml
+      - tests/test_heldout30_functional_anyhow.py
+      - tests/test_heldout30_functional_extra.py
+      - tests/heldout30_pins.json
+      - crates/integration/**
+      - Cargo.lock
+
+permissions:
+  contents: read
+
+jobs:
+  repeated-functional:
+    name: ${{ matrix.case }} / ${{ matrix.scope }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: bitflags
+            repository: bitflags/bitflags
+            scope: all_targets
+            memory_mb: 4096
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Prepare existing offline Docker verifier
+        run: docker pull --platform=linux/amd64 docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab
+      - name: Repeat three real target-owned behavioral integrations and reject wrong behavior
+        shell: bash
+        env:
+          COMPOSER_VERIFIER_TOOLCHAIN: nightly-2026-11-25
+          COMPOSER_VERIFIER_MEMORY_MB: ${{ matrix.memory_mb }}
+        run: |
+          set -euo pipefail
+          python3 -u tests/test_heldout30_functional_extra.py \
+            --target-case ${{ matrix.case }} 2>&1 | tee heldout-extra.log
+          grep -q 'PASS held-out target ${{ matrix.repository }} functional trial 3/3' heldout-extra.log
+          grep -q '"verification_scope": "all_targets"' heldout-extra.log
+          grep -q 'PASS wrong-function control rejected, no publication' heldout-extra.log
+          grep -q 'EVIDENCE_JSON ' heldout-extra.log
+      - name: Retain failed and successful behavioral evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
+        with:
+          name: composer-heldout30-nightly-${{ matrix.case }}
+          path: heldout-extra.log
+          if-no-files-found: warn
+          retention-days: 14

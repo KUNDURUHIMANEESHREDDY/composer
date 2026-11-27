@@ -1,0 +1,35 @@
+name: External Cargo-backed discovery and reuse
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/external-discovery.yml
+      - tests/test_external_discovery_public.py
+      - crates/integration/**
+      - apps/cli/**
+  push:
+    branches:
+      - feat/cargo-upstream-discovery
+    paths:
+      - .github/workflows/external-discovery.yml
+      - tests/test_external_discovery_public.py
+      - crates/integration/**
+      - apps/cli/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  external-discovery:
+    # No fork-submitted code is evaluated by Docker.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Prepare pinned offline verifier
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
+      - name: Discover external repos and verify real functionality in unrelated public target
+        run: python3 -u tests/test_external_discovery_public.py

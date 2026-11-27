@@ -1,0 +1,30 @@
+name: Reproduce and recover real external nightly benchmark blocker
+
+on:
+  push:
+    branches:
+      - fix/holdout-target-benchmark-scope
+  pull_request:
+    paths:
+      - .github/workflows/holdout-nightly-bench.yml
+      - tests/test_recovered_nightly_bench_target.py
+      - crates/integration/src/verified.rs
+      - crates/integration/src/upstream_git.rs
+      - apps/cli/src/main.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repeated-unfamiliar-target:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Use existing offline Docker Rust verifier
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
+      - name: Reproduce nightly benchmark failure and verify three fresh semantic integrations
+        run: python3 -u tests/test_recovered_nightly_bench_target.py
