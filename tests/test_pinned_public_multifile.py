@@ -142,6 +142,9 @@ def verify_feature(root: Path, capsule: Path, target: Path, name: str,
     assert evidence["tests_passed"] is True
     assert evidence["network_disabled"] is True
     assert attribution[0]["source_commit_sha"] == expected_sha
+    assert (output / attribution[0]["published_module"]).is_file(), (
+        "Published provenance path must match the actual module tree"
+    )
     assert attribution[0]["license_documents"]
     for notice in attribution[0]["license_documents"]:
         assert (output / notice["published_path"]).is_file()
