@@ -1,0 +1,38 @@
+name: External open-source capability reuse acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/external-capability-reuse.yml
+      - tests/test_external_luhn_public.py
+      - crates/integration/src/**
+      - crates/intelligence/src/**
+
+permissions:
+  contents: read
+
+jobs:
+  external-upstream-transfer:
+    if: github.repository == 'KUNDURUHIMANEESHREDDY/composer' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out candidate Composer changes
+        uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Fetch restricted Docker verifier image
+        run: docker pull rust:1.99-slim
+      - name: Transfer pinned upstream Luhn code, verify actual behavior, and reject wrong contracts
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -u tests/test_external_luhn_public.py 2>&1 | tee external-luhn-evidence.log
+      - name: Preserve failure and success evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-luhn-reuse-log
+          path: external-luhn-evidence.log
+          if-no-files-found: warn
