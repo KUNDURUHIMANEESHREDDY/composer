@@ -650,7 +650,16 @@ fn copy_tree(
                         data.len() == len && format!("{:x}", Sha256::digest(&data)) == digest
                     })
             });
-            if allowed || reviewed_fixture {
+            // Test-owned binary fuzz inputs are data, not executables.
+            // Permit only a bounded regular file under tests/fuzz/, not
+            // arbitrary .bin files elsewhere in the repository or host.
+            let test_fuzz_fixture = item.extension().is_some_and(|ext| ext == "bin")
+                && source.file_name().is_some_and(|n| n == "fuzz")
+                && source
+                    .parent()
+                    .is_some_and(|parent| parent.file_name().is_some_and(|n| n == "tests"))
+                && fs::metadata(&item)?.len() <= 512 * 1024;
+            if allowed || reviewed_fixture || test_fuzz_fixture {
                 copy_regular(&item, &destination.join(name), files, bytes)?;
             }
         } else {
@@ -1331,14 +1340,21 @@ fn docker_build_internal(
     // No user-controlled shell source is evaluated; the package comes from
     // Cargo's parsed, bounded package.name field and a quoted env var.
     const SCRIPT_MEMBER: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets -p \"$COMPOSER_VERIFIER_PACKAGE\" >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets -p \"$COMPOSER_VERIFIER_PACKAGE\"; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2 -p \"$COMPOSER_VERIFIER_PACKAGE\"; cp Cargo.lock /results/Cargo.lock";
+    // This is the same independently verified member integration and
+    // full test scope, with Cargo's own all-features switch explicitly selected.
+    const SCRIPT_MEMBER_ALL_FEATURES: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets --all-features -p \"$COMPOSER_VERIFIER_PACKAGE\" >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets --all-features -p \"$COMPOSER_VERIFIER_PACKAGE\"; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2 -p \"$COMPOSER_VERIFIER_PACKAGE\"; cp Cargo.lock /results/Cargo.lock";
     let all_features = selected_verifier_features()?;
     let script = if workspace_member_package.is_some() {
-        if contract_focused || all_features {
+        if contract_focused {
             return Err(VerifiedRustError::Unsafe(
-                "workspace member verifier requires full default-feature all-targets scope".into(),
+                "workspace member verifier cannot exclude binary or benchmark test targets".into(),
             ));
         }
-        SCRIPT_MEMBER
+        if all_features {
+            SCRIPT_MEMBER_ALL_FEATURES
+        } else {
+            SCRIPT_MEMBER
+        }
     } else {
         match (contract_focused, all_features) {
             (false, true) => SCRIPT_ALL_FEATURES,

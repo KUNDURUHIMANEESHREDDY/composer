@@ -22,6 +22,7 @@ def main():
     suite.TARGET = repo
     suite.TARGET_MEMBER_DIR = member
     suite.TARGET_MEMBER_PACKAGE = crate
+    suite.EXPLICIT_CONTRACT_TEST = case == "rustls"
     suite.INDEPENDENT_ORACLE = suite.INDEPENDENT_ORACLE.replace(
         "use anyhow::ported_totient;", f"use {crate.replace('-', '_')}::ported_totient;"
     )

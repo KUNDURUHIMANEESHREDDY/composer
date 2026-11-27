@@ -25,18 +25,25 @@ jobs:
       matrix:
         include:
           - case: rustls
+            features: default
             repository: rustls/rustls
           - case: tower
+            features: default
             repository: tower-rs/tower
           - case: futures
+            features: all
             repository: rust-lang/futures-rs
           - case: tracing
+            features: default
             repository: tokio-rs/tracing
           - case: petgraph
+            features: default
             repository: petgraph/petgraph
           - case: rkyv
+            features: default
             repository: rkyv/rkyv
           - case: serde
+            features: default
             repository: serde-rs/serde
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
@@ -47,6 +54,7 @@ jobs:
         shell: bash
         env:
           COMPOSER_VERIFIER_MEMORY_MB: '4096'
+          COMPOSER_VERIFIER_FEATURES: ${{ matrix.features }}
         run: |
           set -euo pipefail
           python3 -u tests/test_heldout30_functional_virtual_members.py \
