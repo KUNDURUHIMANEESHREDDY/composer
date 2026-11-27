@@ -1128,14 +1128,21 @@ pub(crate) fn docker_build(
         None,
         image_id,
         container_user,
-        false,
-        None,
+        VerifierTestScope {
+            contract_focused: false,
+            member_package: None,
+        },
     )
 }
 
 /// Reuse the same restricted Docker pipeline for pinned Cargo Git dependencies.
 /// Only the already fetched Cargo git storage is mounted, never the Cargo home
 /// directory or its credentials/configuration.
+pub(crate) struct VerifierTestScope<'a> {
+    pub contract_focused: bool,
+    pub member_package: Option<&'a str>,
+}
+
 pub(crate) fn docker_build_with_git_cache(
     staged: &Path,
     results: &Path,
@@ -1143,8 +1150,7 @@ pub(crate) fn docker_build_with_git_cache(
     git_cache: &Path,
     image_id: &str,
     container_user: &str,
-    contract_focused: bool,
-    workspace_member_package: Option<&str>,
+    scope: VerifierTestScope<'_>,
 ) -> Result<String, VerifiedRustError> {
     docker_build_internal(
         staged,
@@ -1153,8 +1159,7 @@ pub(crate) fn docker_build_with_git_cache(
         Some(git_cache),
         image_id,
         container_user,
-        contract_focused,
-        workspace_member_package,
+        scope,
     )
 }
 
@@ -1309,9 +1314,10 @@ fn docker_build_internal(
     git_cache: Option<&Path>,
     image_id: &str,
     container_user: &str,
-    contract_focused: bool,
-    workspace_member_package: Option<&str>,
+    scope: VerifierTestScope<'_>,
 ) -> Result<String, VerifiedRustError> {
+    let contract_focused = scope.contract_focused;
+    let workspace_member_package = scope.member_package;
     // A requested gVisor runtime is mandatory, never best-effort.
     let requested_runtime = selected_verifier_runtime()?;
     // Fixed, compiler-owned scripts. Explicitly opt in to testing only library

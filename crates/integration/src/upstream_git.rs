@@ -730,8 +730,10 @@ pub fn verify_upstream_git(
             &options.git_cache,
             &image_id,
             &container_user,
-            options.contract_focused,
-            selected_package.as_deref(),
+            crate::verified::VerifierTestScope {
+                contract_focused: options.contract_focused,
+                member_package: selected_package.as_deref(),
+            },
         )?;
         let elapsed = start.elapsed().as_secs_f64();
         let source = validate_git_lock(&results.join("Cargo.lock"), &options.package, &repo, rev)?;
