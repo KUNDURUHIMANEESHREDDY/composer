@@ -31,6 +31,6 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Pre-provision pinned Docker compiler image
-        run: docker pull rust:1.99-slim
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
       - name: Verify recovery across unrelated upstream Rust repositories
         run: python3 -u tests/test_external_recovery_public.py

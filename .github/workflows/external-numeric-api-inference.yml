@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Pull existing non-root isolated Rust image
-        run: docker pull rust:1.99-slim
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
       - name: Import published-independent source pinned by exact Git SHA and infer scalar API
         shell: bash
         run: |

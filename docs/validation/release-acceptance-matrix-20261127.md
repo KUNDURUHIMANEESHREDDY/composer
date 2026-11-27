@@ -34,3 +34,19 @@ The first extra-target matrix run [45993697881](https://github.com/KUNDURUHIMANE
 - `bitflags/bitflags`: default `cargo test --locked --offline --all-targets` genuinely failed because `benches/parse.rs` contains nightly-only `#![feature(test)]`. This counts as **no full-target support** on the stable verifier. Follow-up must first verify refusal without publication, then exercise Composer's existing explicit `--contract-focused` mode and label `library_and_integration_tests` as **weaker coverage**. Do not mark an excluded benchmark as verified.
 
 The follow-up regression retains all independent contract tests, all exact Git provenance checks, offline Docker isolation, and the wrong-but-type-compatible function rejection. No silent fallback from the default all-targets scope is permitted.
+
+## Exact-container-image supply chain hardening (pending exact-head CI)
+
+The existing CI had 17 floating `docker pull rust:1.99-slim` occurrences.
+Using upstream Docker Buildx `imagetools inspect` against the official Docker
+Hub `library/rust:1.99-slim` OCI image index on 27 November 2026, the
+manifest digest was observed as
+`sha256:f6c4a35d21dbb3c89d7a8d056c193e94fc09037f2b58dd858b09c39a47dd02d7`.
+Every CI prefetch now reuses Docker to pull that immutable digest in
+`scripts/prefetch-pinned-rust-verifier.sh` and only then aliases it to
+`rust:1.99-slim` for Composer's existing strict `--pull=never` offline
+verifier. The script refuses a missing/mismatched image ID. A CI regression
+rejects floating verifier pulls. This is *image content immutability*, not
+independent audit of official Docker/Rust image maintainers or the Docker daemon.
+Installed Windows runsc acceptance remains blocked. This change must pass
+GitHub Linux CI on the updated SHA before being counted as verified.

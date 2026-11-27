@@ -30,7 +30,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Prepare existing offline verifier
-        run: docker pull rust:1.99-slim
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
       - name: Verify truly unpublished Git-only code in independent target
         run: python3 -u tests/test_unpublished_git_public.py
 

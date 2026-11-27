@@ -30,6 +30,6 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Provision offline verifier
-        run: docker pull rust:1.99-slim
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
       - name: Import published strsim API into unrelated pinned public target
         run: python3 -u tests/test_external_crate_adoption_public.py

@@ -25,6 +25,6 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Prepare restricted Rust verifier image
-        run: docker pull rust:1.99-slim
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
       - name: Verify repeated reviewed API transfers against pinned public targets
         run: python3 tests/test_reviewed_api_repeated_public.py
