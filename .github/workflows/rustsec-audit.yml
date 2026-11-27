@@ -1,0 +1,32 @@
+name: RustSec dependency vulnerability audit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "23 5 * * 1"
+
+# Only reads lockfile/advisory data. No repository write or secrets needed.
+permissions:
+  contents: read
+
+jobs:
+  rustsec-lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source without persisting credentials
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install upstream RustSec cargo-audit with checksum validation
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit@0.23.0
+          fallback: none
+      - name: Audit lockfile from outside the untrusted checkout
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP"
+          cargo audit --file "$GITHUB_WORKSPACE/Cargo.lock"

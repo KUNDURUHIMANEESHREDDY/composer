@@ -34,7 +34,7 @@ Status: **NOT independently audited or approved.** This is a review request, not
 The Python behavioral run requires Docker, the pinned image and offline Cargo cache. A Rust unit-test pass is not evidence that these Docker scenarios ran.
 
 ## Automated security-gate integration (not an external audit)
-- GitHub's upstream `actions/dependency-review-action@v5` is configured for read-only pull-request checks, including runtime, development and unknown dependency scopes. It catches newly introduced advisories; it **does not** audit unchanged dependencies, establish build-image provenance, or certify hostile-code isolation. Record its hosted check outcome before treating the gate as operational.
+- GitHub's upstream dependency-review action was attempted but its GitHub dependency-diff API returned HTTP 403 both in CI and with the authenticated repository owner's CLI. This was an unavailable API, **not** an identified vulnerable dependency. The unusable workflow was replaced with upstream RustSec `cargo-audit` (installed using taiki-e/install-action with checksums, fallback disabled). This read-only workflow audits Composer's Cargo.lock from outside the untrusted checkout and is also scheduled weekly once merged. It reports **known** crate advisories, not runtime isolation, publisher provenance or unknown supply-chain vulnerabilities. Its hosted check must pass before the gate is considered operational.
 - The review still requires an unaffiliated security assessor and an explicit release decision.
 
 ## Preliminary automated scanning (not an external audit)
