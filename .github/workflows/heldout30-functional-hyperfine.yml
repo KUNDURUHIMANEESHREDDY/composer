@@ -1,0 +1,70 @@
+name: Held-out binary-only hyperfine root functional integration
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/heldout30-functional-hyperfine.yml
+      - tests/test_heldout30_functional_anyhow.py
+      - tests/test_heldout30_functional_hyperfine.py
+      - tests/heldout30_pins.json
+      - crates/integration/**
+      - Cargo.lock
+
+permissions:
+  contents: read
+
+jobs:
+  functional:
+    name: ${{ matrix.case }} / all_targets
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: hyperfine
+            repository: sharkdp/hyperfine
+            toolchain: stable
+            features: default
+            cpus: 2
+            rustflags_profile: default
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Preload existing offline Docker verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          case '${{ matrix.toolchain }}' in
+            stable) bash scripts/prefetch-pinned-rust-verifier.sh ;;
+            nightly-2026-11-25)
+              docker pull --platform=linux/amd64 docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab ;;
+            stable-system-libs)
+              docker pull --platform=linux/amd64 docker.io/library/rust@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07 ;;
+            *) exit 1 ;;
+          esac
+      - name: Three full-scope integrations and wrong-behavior rejection
+        shell: bash
+        env:
+          COMPOSER_VERIFIER_MEMORY_MB: '4096'
+          COMPOSER_VERIFIER_TOOLCHAIN: ${{ matrix.toolchain }}
+          COMPOSER_VERIFIER_FEATURES: ${{ matrix.features }}
+          COMPOSER_VERIFIER_CPUS: ${{ matrix.cpus }}
+          COMPOSER_VERIFIER_RUSTFLAGS_PROFILE: ${{ matrix.rustflags_profile }}
+        run: |
+          set -euo pipefail
+          python3 -u tests/test_heldout30_functional_hyperfine.py 2>&1 | tee heldout-standalone.log
+          grep -q 'PASS held-out target ${{ matrix.repository }} functional trial 3/3' heldout-standalone.log
+          grep -q '"verification_scope": "all_targets"' heldout-standalone.log
+          grep -q 'PASS wrong-function control rejected, no publication' heldout-standalone.log
+          grep -q 'EVIDENCE_JSON ' heldout-standalone.log
+      - name: Retain success and failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
+        with:
+          name: composer-heldout-hyperfine-${{ matrix.case }}
+          path: heldout-standalone.log
+          if-no-files-found: warn
+          retention-days: 14

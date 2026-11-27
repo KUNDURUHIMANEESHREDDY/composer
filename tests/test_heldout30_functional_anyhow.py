@@ -23,6 +23,7 @@ CONTRACT_FOCUSED = False
 PROVE_FULL_TARGET_FAILURE = False
 EXPECT_WORKSPACE = False
 EXPLICIT_CONTRACT_TEST = False
+ALLOW_BINARY_LIBRARY_ADAPTER = False
 CONTRACT = "tests/composer_heldout30_totient_contract.rs"
 INDEPENDENT_ORACLE = """use anyhow::ported_totient;
 #[test]
@@ -114,8 +115,12 @@ def target_copy(original: Path, base: Path, label: str, lock: Path):
             file.write("\n[[test]]\nname = 'composer_heldout30_totient_contract'\npath = 'tests/composer_heldout30_totient_contract.rs'\n")
     shutil.copy2(lock, working / "Cargo.lock")
     originals = {name:(working/name).read_bytes() for name in (
-        "Cargo.toml","Cargo.lock","src/lib.rs",CONTRACT
+        "Cargo.toml","Cargo.lock",CONTRACT
     )}
+    if (working/"src/lib.rs").exists():
+        originals["src/lib.rs"] = (working/"src/lib.rs").read_bytes()
+    else:
+        originals["src/main.rs"] = (working/"src/main.rs").read_bytes()
     return working, originals
 
 
@@ -143,6 +148,8 @@ def verify(working: Path, upstream: Path, base: Path, name: str,
     ]
     if contract_focused:
         arguments.append("--contract-focused")
+    if ALLOW_BINARY_LIBRARY_ADAPTER:
+        arguments.append("--allow-binary-library-adapter")
     response = cli(*arguments, require_success=require_success)
     return response, output
 
@@ -163,7 +170,11 @@ def main():
         clone_exact(UPSTREAM_URL, UPSTREAM_SHA, upstream)
         clone_exact(f"https://github.com/{TARGET}.git", pinned, target)
         assert (upstream / "LICENSE").is_file()
-        assert (target / "src/lib.rs").is_file()
+        if ALLOW_BINARY_LIBRARY_ADAPTER:
+            assert (target / "src/main.rs").is_file()
+            assert not (target / "src/lib.rs").exists()
+        else:
+            assert (target / "src/lib.rs").is_file()
         assert any((target / name).is_file() for name in ("LICENSE-MIT","LICENSE-APACHE","LICENSE"))
         lock = prefetch_cargo(target, base)
         if PROVE_FULL_TARGET_FAILURE:
@@ -198,6 +209,7 @@ def main():
             assert evidence["docker_all_features"] is (os.getenv("COMPOSER_VERIFIER_FEATURES", "default") == "all")
             assert evidence["docker_rustflags_profile"] == os.getenv("COMPOSER_VERIFIER_RUSTFLAGS_PROFILE", "default")
             assert evidence["cargo_workspace_root_package"] is EXPECT_WORKSPACE
+            assert evidence["binary_library_adapter_created"] is ALLOW_BINARY_LIBRARY_ADAPTER
             assert evidence["verification_scope"] == expected_scope
             assert evidence["docker_memory_limit_mb"] == int(os.getenv("COMPOSER_VERIFIER_MEMORY_MB", "1024"))
             assert evidence["third_party_benchmarks_verified"] is (not CONTRACT_FOCUSED)

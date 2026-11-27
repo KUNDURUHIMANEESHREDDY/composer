@@ -55,6 +55,9 @@ pub struct UpstreamGitOptions {
     /// Explicitly test all library and integration tests, excluding third-party
     /// benchmarks/examples/binaries. Never automatically lower verification.
     pub contract_focused: bool,
+    /// Opt-in: add a library facade to a genuine binary-only Cargo package.
+    /// Reuses reviewed upstream Rust; does not modify original src/main.rs.
+    pub allow_binary_library_adapter: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -531,13 +534,38 @@ pub fn verify_upstream_git(
     }
     let workspace_dirs = workspace_member_roots(&cargo)?;
     let lib = original.join("src/lib.rs");
-    let meta = fs::symlink_metadata(&lib)?;
-    if !meta.is_file() || meta.file_type().is_symlink() {
-        return Err(VerifiedRustError::Unsafe(
-            "target library file is unsafe".into(),
-        ));
-    }
-    let original_lib = fs::read_to_string(&lib)?;
+    let original_lib = match fs::symlink_metadata(&lib) {
+        Ok(meta)
+            if meta.is_file()
+                && !meta.file_type().is_symlink()
+                && !options.allow_binary_library_adapter =>
+        {
+            fs::read_to_string(&lib)?
+        }
+        Err(err)
+            if err.kind() == std::io::ErrorKind::NotFound
+                && options.allow_binary_library_adapter =>
+        {
+            let binary = original.join("src/main.rs");
+            let meta = fs::symlink_metadata(&binary).map_err(|_| {
+                VerifiedRustError::Unsafe(
+                    "binary library adapter requires an existing src/main.rs".into(),
+                )
+            })?;
+            if !meta.is_file() || meta.file_type().is_symlink() || cargo.get("lib").is_some() {
+                return Err(VerifiedRustError::Unsafe(
+                    "binary library adapter requires a regular binary-only Cargo package".into(),
+                ));
+            }
+            String::new()
+        }
+        _ => {
+            return Err(VerifiedRustError::Unsafe(
+                "target library entrypoint missing or unsafe; explicit binary adapter required"
+                    .into(),
+            ));
+        }
+    };
     let dependency_key = format!("composer_git_{}", options.package.replace('-', "_"));
     let dependencies = cargo
         .as_table_mut()
@@ -661,6 +689,7 @@ pub fn verify_upstream_git(
             "docker_all_features": crate::verified::selected_verifier_features()?,
             "docker_rustflags_profile": crate::verified::selected_verifier_rustflags_profile()?,
             "cargo_workspace_root_package": cargo.get("workspace").is_some(),
+            "binary_library_adapter_created": original_lib.is_empty(),
             "verification_scope": if options.contract_focused { "library_and_integration_tests" } else { "all_targets" },
             "third_party_benchmarks_verified": !options.contract_focused,
             "docker_image_id": image_id,
@@ -739,6 +768,7 @@ mod tests {
             license_reviewed: false,
             required_signer_fingerprint: None,
             contract_focused: false,
+            allow_binary_library_adapter: false,
         };
         assert!(matches!(
             verify_upstream_git(&opts),
