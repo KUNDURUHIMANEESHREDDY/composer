@@ -1,11 +1,7 @@
 //! Bounded automatic package selection from human-reviewed external sources.
 //! Only the orchestration/adapter is new: Cargo and the published upstream
 //! crate supply the implementation. There is no arbitrary code generation.
-use std::{
-    error::Error,
-    fs, io,
-    path::PathBuf,
-};
+use std::{error::Error, fs, io, path::PathBuf};
 
 use composer_integration::{UpstreamCrateOptions, verify_upstream_crate};
 use serde_json::{Value, json};
@@ -58,7 +54,9 @@ fn approved_source(
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_'))
     {
-        return Err(invalid("capability name must be a short, plain-text identifier"));
+        return Err(invalid(
+            "capability name must be a short, plain-text identifier",
+        ));
     }
     let records = catalog
         .get("approved_sources")
@@ -99,7 +97,9 @@ fn approved_source(
             || !commit.bytes().all(|b| b.is_ascii_hexdigit())
             || license.len() > 100
         {
-            return Err(invalid("approved source contains invalid package, exact version, symbol, commit, or license"));
+            return Err(invalid(
+                "approved source contains invalid package, exact version, symbol, commit, or license",
+            ));
         }
 
         let Some(parts) = repository.strip_prefix("https://github.com/") else {
@@ -122,7 +122,9 @@ fn approved_source(
             .iter()
             .any(|excluded| owner.eq_ignore_ascii_case(excluded))
         {
-            return Err(invalid("approved source is owned by an excluded repository owner"));
+            return Err(invalid(
+                "approved source is owned by an excluded repository owner",
+            ));
         }
         let mut matches = false;
         for alias in aliases {
@@ -162,11 +164,18 @@ pub(crate) fn compose_approved_external(
     // Do not run network lookups, read untrusted source code or mutate a
     // target without explicit, separate source/license review.
     if !options.license_reviewed {
-        return Err(invalid("independent source/license review required before composition"));
+        return Err(invalid(
+            "independent source/license review required before composition",
+        ));
     }
     let catalog_info = fs::symlink_metadata(&options.catalog)?;
-    if !catalog_info.is_file() || catalog_info.file_type().is_symlink() || catalog_info.len() > 64 * 1024 {
-        return Err(invalid("catalog must be a regular JSON file no larger than 64 KiB"));
+    if !catalog_info.is_file()
+        || catalog_info.file_type().is_symlink()
+        || catalog_info.len() > 64 * 1024
+    {
+        return Err(invalid(
+            "catalog must be a regular JSON file no larger than 64 KiB",
+        ));
     }
     let catalog: Value = serde_json::from_slice(&fs::read(&options.catalog)?)?;
     let selected = approved_source(&catalog, &options.capability, &options.excluded_owners)?;
@@ -185,7 +194,9 @@ pub(crate) fn compose_approved_external(
         })
         .collect::<Vec<_>>();
     if registry_matches.len() != 1 {
-        return Err(invalid("approved package is absent or ambiguous in crates.io search"));
+        return Err(invalid(
+            "approved package is absent or ambiguous in crates.io search",
+        ));
     }
     let latest_seen = registry_matches[0]
         .get("published_version_unverified")
@@ -259,14 +270,12 @@ mod tests {
     fn rejects_ambiguity_and_self_owned_repositories() {
         let mut data = catalog();
         let duplicate = data["approved_sources"][0].clone();
-        data["approved_sources"].as_array_mut().unwrap().push(duplicate);
+        data["approved_sources"]
+            .as_array_mut()
+            .unwrap()
+            .push(duplicate);
         assert!(approved_source(&data, "jaro", &[]).is_err());
-        assert!(approved_source(
-            &catalog(),
-            "jaro",
-            &["rapidfuzz".to_owned()]
-        )
-        .is_err());
+        assert!(approved_source(&catalog(), "jaro", &["rapidfuzz".to_owned()]).is_err());
     }
 
     #[test]
