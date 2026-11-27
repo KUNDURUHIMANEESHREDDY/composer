@@ -45,6 +45,9 @@ pub struct UpstreamGitOptions {
     /// Cargo's pre-fetched git/ directory only (never entire Cargo home).
     pub git_cache: PathBuf,
     pub license_reviewed: bool,
+    /// Optional trusted OpenPGP signer fingerprint (40 or 64 hex).
+    /// Requiring it rejects unsigned or untrusted upstream commits.
+    pub required_signer_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +67,9 @@ pub struct UpstreamGitResult {
     pub reviewed_manifest_blob_oid: String,
     pub reviewed_license_blob_oid: String,
     pub source_git_objects_verified: bool,
+    /// True only when an explicitly required signature was verified by Git.
+    pub source_commit_signature_verified: bool,
+    pub verified_signer_fingerprint: Option<String>,
     pub original_target_unchanged: bool,
     pub offline_tests_passed: bool,
     pub evidence_path: PathBuf,
@@ -106,6 +112,7 @@ fn git_read(path: &Path, args: &[&str]) -> Result<String, VerifiedRustError> {
         .arg("-C")
         .arg(path)
         .args(["-c", "protocol.ext.allow=never"])
+        .args(["-c", "gpg.program=gpg"])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ASKPASS", "");
@@ -154,6 +161,34 @@ fn tracked_blob_matches(
         )));
     }
     Ok(expected)
+}
+
+fn verify_trusted_upstream_signer(
+    checkout: &Path,
+    expected: &str,
+) -> Result<String, VerifiedRustError> {
+    // Reuse installed Git and the user's trusted OpenPGP keyring; no custom
+    // signature verifier. Never accept unsigned or unknown-trust signatures.
+    if !matches!(expected.len(), 40 | 64)
+        || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(VerifiedRustError::Unsafe(
+            "required upstream signer fingerprint must be 40 or 64 hex characters".into(),
+        ));
+    }
+    git_read(checkout, &["verify-commit", "HEAD"]).map_err(|_| {
+        VerifiedRustError::Unsafe(
+            "upstream commit signature verification failed or signing key unavailable".into(),
+        )
+    })?;
+    let trust = git_read(checkout, &["log", "-1", "--format=%G?", "HEAD"])?;
+    let actual = git_read(checkout, &["log", "-1", "--format=%GF", "HEAD"])?;
+    if trust != "G" || !actual.eq_ignore_ascii_case(expected) {
+        return Err(VerifiedRustError::Unsafe(
+            "upstream signing fingerprint does not match a trusted valid Git signature".into(),
+        ));
+    }
+    Ok(actual.to_ascii_uppercase())
 }
 
 fn checkout_license(
@@ -333,6 +368,11 @@ pub fn verify_upstream_git(
         ));
     }
     let reviewed = checkout_license(&options.upstream_checkout, &options.package, &repo, rev)?;
+    let signer = options
+        .required_signer_fingerprint
+        .as_deref()
+        .map(|fingerprint| verify_trusted_upstream_signer(&options.upstream_checkout, fingerprint))
+        .transpose()?;
     let original = options.target_root.canonicalize()?;
     validate_contract_test(&original, &options.contract_test, &options.target_alias)?;
     let target_manifest = original.join("Cargo.toml");
@@ -457,6 +497,8 @@ pub fn verify_upstream_git(
             "reviewed_manifest_blob_oid": reviewed.manifest_blob_oid,
             "reviewed_license_blob_oid": reviewed.license_blob_oid,
             "source_git_objects_verified": true,
+            "source_commit_signature_verified": signer.is_some(),
+            "verified_signer_fingerprint": signer,
             "review_attested": true,
             "target_contract": options.contract_test,
             "public_symbol": options.public_symbol,
@@ -488,6 +530,8 @@ pub fn verify_upstream_git(
             reviewed_manifest_blob_oid: reviewed.manifest_blob_oid.clone(),
             reviewed_license_blob_oid: reviewed.license_blob_oid.clone(),
             source_git_objects_verified: true,
+            source_commit_signature_verified: signer.is_some(),
+            verified_signer_fingerprint: signer.clone(),
             original_target_unchanged: true,
             offline_tests_passed: true,
             evidence_path: output.join(GIT_EVIDENCE),
@@ -525,6 +569,7 @@ mod tests {
             registry_cache: PathBuf::from("missing-registry"),
             git_cache: PathBuf::from("missing-git"),
             license_reviewed: false,
+            required_signer_fingerprint: None,
         };
         assert!(matches!(
             verify_upstream_git(&opts),
