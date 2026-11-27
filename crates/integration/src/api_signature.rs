@@ -3,6 +3,7 @@
 //! Compiler tests remain the actual acceptance gate; no user Rust expressions
 //! or arbitrary snippets are ever accepted into this generator.
 use std::{collections::BTreeSet, fs, path::Path};
+#[cfg(test)]
 use uuid::Uuid;
 
 use crate::VerifiedRustError;
