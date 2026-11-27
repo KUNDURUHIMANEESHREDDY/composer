@@ -70,7 +70,9 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert!(jaro.contains("pub fn ported_jaro(arg0: ::std::string::String, arg1: ::std::string::String) -> f64"));
+        assert!(jaro.contains(
+            "pub fn ported_jaro(arg0: ::std::string::String, arg1: ::std::string::String) -> f64"
+        ));
         assert!(jaro.contains("composer_git_strsim::jaro(arg0.as_str(), arg1.as_str())"));
 
         let predicate = reviewed_string_adapter(
@@ -102,8 +104,13 @@ mod tests {
             "ported_jaro(String,String)->f64;panic!()",
         ] {
             assert!(
-                reviewed_string_adapter("composer_git_strsim", "jaro", "ported_jaro", Some(invalid))
-                    .is_err(),
+                reviewed_string_adapter(
+                    "composer_git_strsim",
+                    "jaro",
+                    "ported_jaro",
+                    Some(invalid)
+                )
+                .is_err(),
                 "{invalid}"
             );
         }
