@@ -30,5 +30,5 @@ jobs:
         run: docker pull rust:1.99-slim
       - name: Validate pinned public multi-file source against existing targets
         run: python3 tests/test_pinned_public_multifile.py
-      - name: Test read-only Rust API discovery on three pinned public source repos
+      - name: Test read-only Rust API discovery on five pinned public source repos
         run: python3 tests/test_rust_api_discovery_public.py
