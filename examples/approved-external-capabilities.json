@@ -27,6 +27,18 @@
         "luhn validation",
         "luhn checksum validation"
       ]
+    },
+    {
+      "package": "deunicode",
+      "version": "1.6.2",
+      "public_symbol": "deunicode",
+      "repository": "https://github.com/kornelski/deunicode",
+      "commit": "cfb8552fbbdf6d1f3f996ee4f2e78ec5e482bcef",
+      "license": "BSD-3-Clause",
+      "capabilities": [
+        "unicode to ascii transliteration",
+        "ascii transliteration"
+      ]
     }
   ]
 }
