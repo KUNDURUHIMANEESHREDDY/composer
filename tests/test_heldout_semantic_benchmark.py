@@ -130,72 +130,21 @@ def verify_misleading_semantics(target: Path, capsule: Path, root: Path) -> None
                              "wrong-but-compilable totient semantics", "test result: FAILED")
 
 
-def verify_dependency_conflict(target: Path, root: Path) -> None:
-    """Synthetic source + untouched public target copy with disjoint semver ranges.
+def verify_dependency_conflict(_target: Path, _root: Path) -> None:
+    """Unit-level source/target Cargo lockfile compatibility acceptance.
 
-    The source uses semver 1.x; a disposable target copy declares 0.11.x.
-    Acceptance requires rejection and no publication. This case is a controlled
-    dependency fixture, not a third independent public-source integration.
+    Source execution with external dependencies is currently refused earlier
+    by the wiring import-closure gate; do not mislabel that as a tested
+    dependency-version conflict.
     """
-    source = root / "dependency-source-fixture"
-    (source / "src").mkdir(parents=True)
-    (source / "Cargo.toml").write_text(
-        "[package]\nname = 'heldout_semver_source'\nversion = '0.1.0'\n"
-        "edition = '2021'\nlicense = 'MIT'\n[dependencies]\nsemver = '1'\n",
-        encoding="utf-8",
+    test_name = "verified::tests::rejects_disjoint_semver_lockfile_in_dependent_target"
+    checked = run(
+        "cargo", "test", "-p", "composer-integration", "--lib",
+        test_name, "--", "--exact",
     )
-    (source / "src/lib.rs").write_text(
-        "use semver::Version;\n"
-        "pub fn parse_major(value: &str) -> u64 {\n"
-        "    Version::parse(value).map(|v| v.major).unwrap_or(0)\n}\n",
-        encoding="utf-8",
-    )
-    (source / "LICENSE").write_text(
-        "MIT-licensed synthetic fixture authored solely for this benchmark.\n",
-        encoding="utf-8",
-    )
-    run("git", "init", "-q", str(source))
-    run("git", "-C", str(source), "add", ".")
-    run("git", "-C", str(source), "-c", "user.name=ComposerBench",
-        "-c", "user.email=benchmark@invalid.example", "commit", "-qm", "source fixture")
-    sha = run("git", "-C", str(source), "rev-parse", "HEAD").stdout.strip()
-    capsule = make_capsule(
-        source, root, "parse_major", "src/lib.rs", "heldout-dependency-conflict",
-        {"src/lib.rs"}, expected_sha=sha,
-    )
-    work = root / "conflict-target"
-    shutil.copytree(target, work, ignore=shutil.ignore_patterns(".git"))
-    lib = work / "src/lib.rs"
-    cargo = work / "Cargo.toml"
-    lib.write_text(lib.read_text() + "\npub fn parse_major(value: &str) -> u64 { todo!() }\n")
-    text = cargo.read_text()
-    assert "[dependencies]" in text
-    cargo.write_text(text.replace("[dependencies]", "[dependencies]\nsemver = '=0.11.0'", 1))
-    test = work / TEST
-    (work / "tests").mkdir(exist_ok=True)
-    test.write_text(
-        "use trigram::parse_major;\n"
-        "#[test] fn semver_contract() { assert_eq!(parse_major(\"1.2.3\"), 1); }\n",
-        encoding="utf-8",
-    )
-    original = lib.read_bytes(), cargo.read_bytes(), test.read_bytes()
-    assert prepare_registry(source, root, "source-semver"), "source semver cache unavailable"
-    assert prepare_registry(work, root, "target-semver"), "target semver cache unavailable"
-    suggestion = json.loads(cli("suggest-rust-api", str(capsule), str(work)).stdout)
-    req = next(x for x in suggestion["requirements"] if x["target_function"] == "parse_major")
-    rule = req["best_suggestion"]["suggested_cli_rule"]
-    assert rule == "parse_major=parse_major(&str)->u64"
-    output = root / "never-publish-dependency-conflict"
-    response = cli(
-        "verify-rust", str(capsule), str(work), "--output", str(output),
-        "--license-reviewed", "--registry-cache", str(CACHE),
-        "--reviewed-api-rule", rule, "--contract-test", TEST,
-        require_success=False,
-    )
-    require_negative_failure(response, output, original, work,
-                             "disjoint Cargo semver requirements",
-                             "incompatible with source")
-
+    report = checked.stdout + checked.stderr
+    assert "1 passed" in report and "0 failed" in report, report[-2000:]
+    print("PASS Cargo lockfile semver conflict unit gate (not end-to-end transfer)", flush=True)
 
 
 def verify_unsupported_strsim_public_source(target: Path, root: Path) -> None:
@@ -265,7 +214,8 @@ def main() -> None:
             "public_target_runs": positive,
             "wrong_but_compilable_rejected": True,
             "unresolved_unfamiliar_source_rejected": True,
-            "disjoint_dependency_rejected": True,
+            "disjoint_dependency_unit_guard_passed": True,
+            "dependency_conflict_end_to_end": "blocked earlier by unresolved imports",
             "limits": "Known public source to new public target; newly held-out source "
                       "correctly refused unresolved closure. Dependency mismatch is "
                       "a synthetic source fixture. Manually authored contracts; "
@@ -274,7 +224,7 @@ def main() -> None:
         print("EVIDENCE_JSON " + json.dumps(evidence, sort_keys=True), flush=True)
         print("PASS heldout matrix: three known-source/new-public-target transfers, "
               "wrong semantics rejected, new public source unsupported "
-              "and conflict fail-closed", flush=True)
+              "and Cargo conflict unit guard passed", flush=True)
 
 
 if __name__ == "__main__":
