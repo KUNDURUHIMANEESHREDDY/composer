@@ -50,11 +50,11 @@ jobs:
             repository: BurntSushi/walkdir
           - case: syn
             features: all
-            toolchain: stable
+            toolchain: nightly-rustc-dev-2026-11-25
             repository: dtolnay/syn
           - case: uuid
             features: default
-            toolchain: nightly-2026-11-25
+            toolchain: stable-gungraun-0.20.0
             repository: uuid-rs/uuid
           - case: crossbeam
             features: default
@@ -75,6 +75,8 @@ jobs:
             stable) bash scripts/prefetch-pinned-rust-verifier.sh ;;
             nightly-2026-11-25)
               docker pull --platform=linux/amd64 docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab ;;
+            stable-gungraun-0.20.0|nightly-rustc-dev-2026-11-25)
+              bash scripts/prefetch-extended-rust-verifier.sh '${{ matrix.toolchain }}' ;;
             *) exit 1 ;;
           esac
       - name: Test root package three times and reject wrong implementation

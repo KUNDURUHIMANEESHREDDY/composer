@@ -1,0 +1,6 @@
+# Frozen upstream nightly compiler + exact-date compiler-development components.
+# rustup checks signed distribution manifests and component checksums.
+FROM docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab
+RUN rustup component add rustc-dev llvm-tools-preview \
+    && test -n "$(rustc --print sysroot)" \
+    && rustc --version

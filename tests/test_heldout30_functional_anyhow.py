@@ -169,6 +169,8 @@ def main():
     images = {
         "nightly-2026-11-25": "docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab",
         "stable-system-libs": "docker.io/library/rust@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07",
+        "stable-gungraun-0.20.0": "composer-verifier-gungraun:0.20.0",
+        "nightly-rustc-dev-2026-11-25": "composer-verifier-rustc-dev:nightly-2026-11-25",
     }
     image = images.get(os.getenv("COMPOSER_VERIFIER_TOOLCHAIN"), "rust:1.99-slim")
     run("docker", "image", "inspect", image)

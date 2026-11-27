@@ -19,12 +19,16 @@ use crate::{RustWiringOptions, verify_capsule, wire::wire_rust_module_for_verifi
 const DEFAULT_IMAGE: &str = "rust:1.99-slim";
 const SYSTEM_LIBS_IMAGE: &str = "docker.io/library/rust@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07";
 const NIGHTLY_IMAGE: &str = "docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab";
+const GUNGRAUN_IMAGE: &str = "composer-verifier-gungraun:0.20.0";
+const RUSTC_DEV_IMAGE: &str = "composer-verifier-rustc-dev:nightly-2026-11-25";
 
 fn validated_verifier_image(value: Option<&str>) -> Result<&'static str, VerifiedRustError> {
     match value {
         None | Some("stable") => Ok(DEFAULT_IMAGE),
         Some("nightly-2026-11-25") => Ok(NIGHTLY_IMAGE),
         Some("stable-system-libs") => Ok(SYSTEM_LIBS_IMAGE),
+        Some("stable-gungraun-0.20.0") => Ok(GUNGRAUN_IMAGE),
+        Some("nightly-rustc-dev-2026-11-25") => Ok(RUSTC_DEV_IMAGE),
         _ => Err(VerifiedRustError::Unsafe(
             "unsupported COMPOSER_VERIFIER_TOOLCHAIN".into(),
         )),
@@ -55,6 +59,14 @@ fn verifier_toolchain_is_allowlisted() {
     assert_eq!(
         validated_verifier_image(Some("stable-system-libs")).unwrap(),
         SYSTEM_LIBS_IMAGE
+    );
+    assert_eq!(
+        validated_verifier_image(Some("stable-gungraun-0.20.0")).unwrap(),
+        GUNGRAUN_IMAGE
+    );
+    assert_eq!(
+        validated_verifier_image(Some("nightly-rustc-dev-2026-11-25")).unwrap(),
+        RUSTC_DEV_IMAGE
     );
     assert!(validated_verifier_image(Some("nightly")).is_err());
     assert!(validated_verifier_image(Some("arbitrary/image")).is_err());
