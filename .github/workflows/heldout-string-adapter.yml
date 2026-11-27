@@ -1,6 +1,8 @@
 name: Held-out third-party API adaptation acceptance
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   pull_request:
     paths:
@@ -21,11 +23,11 @@ jobs:
     timeout-minutes: 35
     steps:
       - name: Check out Composer
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
       - name: Prepare existing isolated verifier image
-        run: docker pull rust:1.99-slim
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
       - name: Verify independent published transliteration source into held-out target
         shell: bash
         run: |
@@ -33,7 +35,7 @@ jobs:
           python3 -u tests/test_unseen_owned_string_adaptation.py 2>&1 | tee heldout-string-adapter-evidence.log
       - name: Preserve behavioral and failure evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: heldout-string-adapter-evidence
           path: heldout-string-adapter-evidence.log

@@ -1,6 +1,8 @@
 name: Held-out functional verification in real unfamiliar Rust target
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   pull_request:
     paths:

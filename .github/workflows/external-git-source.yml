@@ -8,8 +8,7 @@ on:
       - crates/integration/**
       - apps/cli/**
   push:
-    branches:
-      - feat/verified-cargo-git-reuse
+    branches: [main]
     paths:
       - .github/workflows/external-git-source.yml
       - tests/test_external_git_source_public.py

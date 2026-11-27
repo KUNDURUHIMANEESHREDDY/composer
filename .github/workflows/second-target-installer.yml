@@ -10,8 +10,7 @@ on:
       - apps/cli/**
       - Cargo.lock
   push:
-    branches:
-      - feat/second-target-nsis-installer
+    branches: [main]
   workflow_dispatch:
 
 permissions:

@@ -8,8 +8,7 @@ on:
       - crates/integration/**
       - apps/cli/**
   push:
-    branches:
-      - feat/external-recovery-planner
+    branches: [main]
     paths:
       - .github/workflows/external-recovery.yml
       - tests/test_external_recovery_public.py

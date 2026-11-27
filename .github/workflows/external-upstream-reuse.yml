@@ -8,8 +8,7 @@ on:
       - crates/integration/**
       - apps/cli/**
   push:
-    branches:
-      - feat/verified-upstream-crate-reuse
+    branches: [main]
     paths:
       - .github/workflows/external-upstream-reuse.yml
       - tests/test_external_crate_adoption_public.py

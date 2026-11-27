@@ -9,8 +9,7 @@ on:
       - apps/cli/**
       - Cargo.lock
   push:
-    branches:
-      - feat/multisource-attested-windows-cli
+    branches: [main]
   workflow_dispatch:
 
 permissions:

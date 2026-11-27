@@ -1,6 +1,8 @@
 name: Frozen virtual-workspace member functional integration
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   pull_request:
     paths:

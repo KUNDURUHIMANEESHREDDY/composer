@@ -1,6 +1,8 @@
 name: Held-out Rust semantic integration benchmark
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   pull_request:
     paths:
@@ -19,11 +21,11 @@ jobs:
     timeout-minutes: 35
     steps:
       - name: Check out candidate implementation
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install stable Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
       - name: Prepare restricted verifier
-        run: docker pull rust:1.99-slim
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
       - name: Attempt three held-out semantic transfers and independent negative controls
         env:
           COMPOSER_UNSEEN_REPEATS: "3"
@@ -33,7 +35,7 @@ jobs:
           python3 tests/test_unseen_semantics_public.py 2>&1 | tee heldout-semantic-benchmark.log
       - name: Retain evidence on success or failure
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: heldout-semantic-benchmark-evidence
           path: heldout-semantic-benchmark.log

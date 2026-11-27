@@ -2,8 +2,7 @@ name: Reproduce and recover real external nightly benchmark blocker
 
 on:
   push:
-    branches:
-      - fix/holdout-target-benchmark-scope
+    branches: [main]
   pull_request:
     paths:
       - .github/workflows/holdout-nightly-bench.yml

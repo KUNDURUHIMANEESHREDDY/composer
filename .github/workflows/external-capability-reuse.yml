@@ -1,6 +1,8 @@
 name: External open-source capability reuse acceptance
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   pull_request:
     paths:
@@ -19,11 +21,11 @@ jobs:
     timeout-minutes: 35
     steps:
       - name: Check out candidate Composer changes
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
       - name: Fetch restricted Docker verifier image
-        run: docker pull rust:1.99-slim
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
       - name: Transfer pinned upstream Luhn code, verify actual behavior, and reject wrong contracts
         shell: bash
         run: |
@@ -31,7 +33,7 @@ jobs:
           python3 -u tests/test_external_luhn_public.py 2>&1 | tee external-luhn-evidence.log
       - name: Preserve failure and success evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: external-luhn-reuse-log
           path: external-luhn-evidence.log

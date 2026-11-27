@@ -17,11 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source without persisting credentials
-        uses: actions/checkout@v6
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
       - name: Install upstream RustSec cargo-audit with checksum validation
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@073e1fd0bc889c9aee68dbaaa927cde1b5653a83
         with:
           tool: cargo-audit@0.23.0
           fallback: none

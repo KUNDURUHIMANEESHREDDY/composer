@@ -8,8 +8,7 @@ on:
       - crates/integration/**
       - apps/cli/**
   push:
-    branches:
-      - feat/unpublished-git-windows-acceptance
+    branches: [main]
     paths:
       - .github/workflows/unpublished-git-windows.yml
       - tests/test_unpublished_git_public.py
