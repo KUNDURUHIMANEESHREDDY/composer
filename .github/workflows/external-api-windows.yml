@@ -1,0 +1,39 @@
+name: Windows Rust native compatibility for external API adapter
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/external-api-windows.yml
+      - crates/integration/**
+      - apps/cli/**
+      - Cargo.lock
+
+permissions:
+  contents: read
+
+jobs:
+  windows-rust:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check Composer Rust workspace on Windows
+        run: cargo check --locked --workspace
+      - name: Run native integration library regression tests
+        run: cargo test --locked -p composer-integration --lib
+      - name: Validate Composer CLI compiles and exposes Git import adapter
+        shell: pwsh
+        run: |
+          cargo run --locked -p composer-cli -- --help | Tee-Object -FilePath windows-cli-help.log
+          if (-not (Select-String -Path windows-cli-help.log -Pattern "verify-external-git-rust" -Quiet)) {
+            throw "Missing pinned external Git import subcommand"
+          }
+      - name: Preserve Windows help output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: composer-windows-rust-help
+          path: windows-cli-help.log
+          if-no-files-found: warn
