@@ -1,0 +1,39 @@
+name: External CodeQL Rust security analysis
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/external-codeql-rust.yml
+      - crates/**
+      - apps/**
+      - Cargo.lock
+      - Cargo.toml
+      - scripts/**
+      - tests/**
+
+permissions:
+  contents: read
+
+jobs:
+  codeql-rust:
+    if: github.repository == 'KUNDURUHIMANEESHREDDY/composer' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - name: Check out exact PR code
+        uses: actions/checkout@v4
+      - name: Initialize established third-party CodeQL Rust analyzer
+        uses: github/codeql-action/init@bf58c2ac1f8060aa73f1225f461c80391348076a
+        with:
+          languages: rust
+          build-mode: none
+          queries: security-extended
+      - name: Analyze Rust source without running third-party build scripts
+        uses: github/codeql-action/analyze@bf58c2ac1f8060aa73f1225f461c80391348076a
+        with:
+          category: /language:rust
