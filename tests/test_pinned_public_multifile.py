@@ -173,7 +173,11 @@ def main() -> None:
         for name, (url, sha) in TARGET_REPOS.items():
             target = root / f"target-{name}"
             clone_exact(url, sha, target)
-            for notice in ("LICENSE-MIT", "LICENSE-APACHE"):
+            expected_notices = (
+                ("LICENSE",) if name == "ebtech-target"
+                else ("LICENSE-MIT", "LICENSE-APACHE")
+            )
+            for notice in expected_notices:
                 assert (target / notice).is_file(), (name, notice)
             targets[name] = target
 
