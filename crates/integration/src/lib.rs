@@ -4,6 +4,7 @@
 mod apply;
 mod compatibility;
 mod dependencies;
+mod verified;
 mod verify;
 mod wire;
 
@@ -16,6 +17,9 @@ pub use compatibility::{
 pub use dependencies::{
     DependencyEcosystem, DependencyInventory, DependencyKind, DependencyRequirement,
     LicenseDeclaration, RequirementStatus,
+};
+pub use verified::{
+    VerifiedRustError, VerifiedRustOptions, VerifiedRustResult, compose_verified_rust,
 };
 pub use verify::{CapsuleVerification, VerificationError, VerifiedCapsule, verify_capsule};
 pub use wire::{RustWiringError, RustWiringOptions, RustWiringResult, wire_rust_module};

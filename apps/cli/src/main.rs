@@ -3,8 +3,8 @@ use std::{error::Error, fs, net::SocketAddr, path::PathBuf};
 use clap::{Parser, Subcommand};
 use composer_core::ProjectSpec;
 use composer_integration::{
-    IntegrationOptions, RustWiringOptions, apply_integration, plan_integration, verify_capsule,
-    wire_rust_module,
+    IntegrationOptions, RustWiringOptions, VerifiedRustOptions, apply_integration,
+    compose_verified_rust, plan_integration, verify_capsule, wire_rust_module,
 };
 use composer_intelligence::{
     CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
@@ -109,6 +109,22 @@ enum Command {
         /// Assert independent license and source review; does not certify safety.
         #[arg(long)]
         license_reviewed: bool,
+    },
+    /// Resolve direct Rust dependencies and verify wired code with offline Docker Cargo tests.
+    VerifyRust {
+        /// Verified Feature Capsule directory.
+        capsule: PathBuf,
+        /// Original target Rust application; never modified.
+        target: PathBuf,
+        /// New output directory for successfully verified source and lockfile.
+        #[arg(long)]
+        output: PathBuf,
+        /// Assert independent license and source review; not legal clearance.
+        #[arg(long)]
+        license_reviewed: bool,
+        /// Read-only Cargo registry cache to use for offline dependency solving.
+        #[arg(long)]
+        registry_cache: Option<PathBuf>,
     },
     /// Start the local composition API.
     Serve {
@@ -225,6 +241,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 capsule_root: capsule,
                 target_root: target,
                 license_reviewed,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::VerifyRust {
+            capsule,
+            target,
+            output,
+            license_reviewed,
+            registry_cache,
+        } => {
+            let result = compose_verified_rust(&VerifiedRustOptions {
+                capsule_root: capsule,
+                target_root: target,
+                output_root: output,
+                license_reviewed,
+                registry_cache,
             })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
