@@ -10,6 +10,7 @@ mod dependencies;
 mod external_discovery;
 mod multifile;
 mod reviewed;
+mod reviewed_upstream_adapter;
 mod upstream_crate;
 mod upstream_git;
 mod upstream_recovery;
