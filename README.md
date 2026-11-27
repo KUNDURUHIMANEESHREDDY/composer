@@ -247,3 +247,11 @@ cargo test --workspace
 ```
 
 See [the architecture overview](docs/architecture/overview.md), [repository intelligence design](docs/architecture/repository-intelligence.md), [sandbox controls and production hardening gaps](docs/architecture/verification-hardening.md), [pinned public-repository validation](docs/validation/pinned-public-rust-repositories.md), and [the MVP plan](docs/architecture/mvp-plan.md).
+
+## Licensing and upstream attribution
+
+Original Composer-authored workspace code is offered under **MIT OR Apache-2.0**, at your option. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE). All six first-party Cargo packages inherit that SPDX expression from the workspace manifest.
+
+**This does not relicense third-party software.** Code or components imported from other repositories keep their upstream license, copyright, attribution, NOTICE requirements, and any other applicable obligations. Verified source integrations preserve notices under `third_party_licenses/` and record their origins and SHA-256 hashes in `composer-source-attributions.json`; pinned Git dependency integration reports retain reviewed source Git blob identities and additional legal documents. Review each selected upstream license and file-level header before integration or redistribution. A public repository is not automatically licensed for copying, and an SPDX syntax check is not a legal compatibility determination.
+
+If you discover a file in Composer that is owned by another author and subject to different terms, those original terms take precedence for that file; please report it using [.github/SECURITY.md](.github/SECURITY.md) instead of assuming the Composer project license grants rights to it.
