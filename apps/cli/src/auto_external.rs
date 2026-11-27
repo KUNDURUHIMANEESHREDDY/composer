@@ -159,9 +159,7 @@ fn approved_source(
 /// package and version, not a fuzzy search result or description.
 fn cargo_info_matches(info: &str, package: &str, version: &str) -> bool {
     let header = info.lines().find(|line| !line.trim().is_empty());
-    let named = header
-        .and_then(|line| line.split_whitespace().next())
-        == Some(package);
+    let named = header.and_then(|line| line.split_whitespace().next()) == Some(package);
     let versioned = info.lines().any(|line| {
         line.trim()
             .strip_prefix("version:")
@@ -226,11 +224,15 @@ pub(crate) fn compose_approved_external(
         .env("CARGO_HTTP_TIMEOUT", "15")
         .output()?;
     if !info.status.success() || info.stdout.len() > 16 * 1024 {
-        return Err(invalid("Cargo could not verify the approved exact package version"));
+        return Err(invalid(
+            "Cargo could not verify the approved exact package version",
+        ));
     }
     let info_output = String::from_utf8(info.stdout)?;
     if !cargo_info_matches(&info_output, &selected.package, &selected.version) {
-        return Err(invalid("Cargo registry package identity or pinned version mismatch"));
+        return Err(invalid(
+            "Cargo registry package identity or pinned version mismatch",
+        ));
     }
     let latest_seen = registry_matches
         .first()
@@ -327,11 +329,16 @@ mod tests {
 
     #[test]
     fn exact_cargo_metadata_does_not_accept_name_or_version_confusion() {
-        let info = "strsim #jaro #similarity\nString similarity metrics\nversion: 0.11.1\nlicense: MIT\n";
+        let info =
+            "strsim #jaro #similarity\nString similarity metrics\nversion: 0.11.1\nlicense: MIT\n";
         assert!(cargo_info_matches(info, "strsim", "0.11.1"));
         assert!(!cargo_info_matches(info, "strsim", "0.10.0"));
         assert!(!cargo_info_matches(info, "strsim-copy", "0.11.1"));
-        assert!(!cargo_info_matches("strsim\nversion: 0.10.0\n", "strsim", "0.11.1"));
+        assert!(!cargo_info_matches(
+            "strsim\nversion: 0.10.0\n",
+            "strsim",
+            "0.11.1"
+        ));
     }
 
     #[test]
