@@ -169,16 +169,14 @@ fn checkout_license(
         .and_then(|table| table.get("name"))
         .and_then(toml::Value::as_str)
         != Some(package)
-        || cargo
-            .get("package")
-            .and_then(|table| table.get("license"))
-            .and_then(toml::Value::as_str)
-            .is_none_or(str::is_empty)
     {
         return Err(VerifiedRustError::Unsafe(
-            "source checkout package/license metadata not confirmed".into(),
+            "source checkout package name does not match reviewed source".into(),
         ));
     }
+    // Unpublished Git-only libraries often supply a LICENSE file without
+    // declaring the license in Cargo.toml. Keep the explicit review gate and
+    // hash/copy the committed LICENSE file rather than inventing a declaration.
     for name in [
         "LICENSE",
         "LICENSE-MIT",
