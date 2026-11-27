@@ -1,0 +1,36 @@
+name: Inferred numeric-output API from independent GitHub source
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/external-numeric-api-inference.yml
+      - crates/integration/src/api_discovery.rs
+      - crates/integration/src/reviewed_upstream_adapter.rs
+      - tests/test_pinned_git_numeric_api_inference.py
+
+permissions:
+  contents: read
+
+jobs:
+  external-numeric-api:
+    if: github.repository == 'KUNDURUHIMANEESHREDDY/composer' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Pull existing non-root isolated Rust image
+        run: docker pull rust:1.99-slim
+      - name: Import published-independent source pinned by exact Git SHA and infer scalar API
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -u tests/test_pinned_git_numeric_api_inference.py 2>&1 | tee external-numeric-api-evidence.log
+      - name: Retain success and failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-numeric-api-inference-evidence
+          path: external-numeric-api-evidence.log
+          if-no-files-found: warn
