@@ -3,11 +3,11 @@ use std::{error::Error, fs, net::SocketAddr, path::PathBuf};
 use clap::{Parser, Subcommand};
 use composer_core::ProjectSpec;
 use composer_integration::{
-    BatchRustOptions, IntegrationOptions, RustWiringOptions, UpstreamCrateOptions,
-    UpstreamRecoveryCandidate, UpstreamRecoveryOptions, VerifiedRustOptions, apply_integration,
-    compose_verified_rust, compose_verified_rust_batch, discover_rust_api_contracts,
-    plan_integration, recover_upstream_crate, verify_capsule, verify_upstream_crate,
-    wire_rust_module,
+    BatchRustOptions, ExternalDiscoveryOptions, IntegrationOptions, RustWiringOptions,
+    UpstreamCrateOptions, UpstreamRecoveryCandidate, UpstreamRecoveryOptions, VerifiedRustOptions,
+    apply_integration, compose_verified_rust, compose_verified_rust_batch,
+    discover_external_rust, discover_rust_api_contracts, plan_integration,
+    recover_upstream_crate, verify_capsule, verify_upstream_crate, wire_rust_module,
 };
 use composer_intelligence::{
     CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
@@ -187,6 +187,27 @@ enum Command {
         /// Confirm independent license/source review; not legal clearance.
         #[arg(long)]
         license_reviewed: bool,
+    },
+    /// Discover independent existing Rust capabilities via Cargo search/info
+    /// and Composer's existing Rust analyzer. Read-only, no upstream code execution.
+    DiscoverExternalRust {
+        /// Public capability query, e.g. jaro or levenshtein.
+        query: String,
+        /// Target function name required in upstream source, e.g. jaro.
+        #[arg(long)]
+        function: String,
+        /// Pre-existing Cargo registry directory, e.g. ~/.cargo/registry.
+        #[arg(long)]
+        registry_cache: PathBuf,
+        /// Exclude this GitHub owner (repeatable; include your own account).
+        #[arg(long = "exclude-owner")]
+        exclude_owners: Vec<String>,
+        /// Maximum external candidates to inspect and suggest (1-5).
+        #[arg(long, default_value_t = 5)]
+        limit: usize,
+        /// New candidate JSON path compatible with recover-external-rust-crate.
+        #[arg(long)]
+        output: PathBuf,
     },
     /// Try 1-5 reviewed external package candidates in preference order.
     /// Resolves cached semver versions, falls back after incorrect behavior,
@@ -419,6 +440,34 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 license_reviewed,
             })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::DiscoverExternalRust {
+            query,
+            function,
+            registry_cache,
+            exclude_owners,
+            limit,
+            output,
+        } => {
+            let report = discover_external_rust(&ExternalDiscoveryOptions {
+                query,
+                function_name: function,
+                exclude_owners,
+                registry_cache,
+                max_candidates: limit,
+            })?;
+            if report.candidates.is_empty() {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                return Err("no statically supported external function candidates; nothing published".into());
+            }
+            // Recovery reads the raw candidate array; never overwrite a prior review.
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&output)?;
+            use std::io::Write;
+            file.write_all(&serde_json::to_vec_pretty(&report.candidates)?)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::RecoverExternalRustCrate {
             target,
