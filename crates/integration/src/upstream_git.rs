@@ -575,8 +575,11 @@ mod tests {
         fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
         git(&["config", "core.fsmonitor", helper.to_str().unwrap()]);
 
-        let clean = git_read(&checkout, &["status", "--porcelain", "--untracked-files=all"])
-            .expect("Composer must still verify a clean checkout");
+        let clean = git_read(
+            &checkout,
+            &["status", "--porcelain", "--untracked-files=all"],
+        )
+        .expect("Composer must still verify a clean checkout");
         assert!(clean.is_empty());
         assert!(
             !marker.exists(),
