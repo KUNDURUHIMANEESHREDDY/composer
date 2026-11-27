@@ -84,9 +84,8 @@ fn bounded_command(command: &mut Command, operation: &str) -> Result<String, Ver
                 .collect::<String>()
         )));
     }
-    String::from_utf8(output.stdout).map_err(|_| {
-        VerifiedRustError::Unsafe(format!("{operation}: non-UTF8 command response"))
-    })
+    String::from_utf8(output.stdout)
+        .map_err(|_| VerifiedRustError::Unsafe(format!("{operation}: non-UTF8 command response")))
 }
 
 fn parse_search_packages(response: &str) -> Vec<String> {
@@ -98,10 +97,12 @@ fn parse_search_packages(response: &str) -> Vec<String> {
             continue;
         };
         let name = name.trim();
-        if name.is_empty() || name.len() > 64
+        if name.is_empty()
+            || name.len() > 64
             || !name.bytes().next().is_some_and(|c| c.is_ascii_alphabetic())
-            || !name.bytes().all(|c| c.is_ascii_lowercase()
-                || c.is_ascii_digit() || matches!(c, b'_' | b'-'))
+            || !name
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'_' | b'-'))
             || !found.insert(name.to_owned())
         {
             continue;
@@ -113,7 +114,9 @@ fn parse_search_packages(response: &str) -> Vec<String> {
 
 fn info_field<'a>(info: &'a str, name: &str) -> Option<&'a str> {
     info.lines().find_map(|line| {
-        line.trim().strip_prefix(name).and_then(|rest| rest.strip_prefix(':'))
+        line.trim()
+            .strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix(':'))
             .map(str::trim)
     })
 }
@@ -139,9 +142,7 @@ fn public_symbol_from_sources(
     let mut candidates = Vec::new();
     for root in roots.flatten() {
         let name = root.file_name().to_string_lossy().into_owned();
-        if !name.starts_with("index.crates.io-")
-            || !root.file_type().ok()?.is_dir()
-        {
+        if !name.starts_with("index.crates.io-") || !root.file_type().ok()?.is_dir() {
             continue;
         }
         let crate_root = root.path().join(format!("{package}-{version}"));
@@ -241,23 +242,29 @@ fn repository_head_sha(github: &GitHubRepository) -> Option<String> {
 pub fn discover_external_rust(
     options: &ExternalDiscoveryOptions,
 ) -> Result<ExternalDiscoveryResult, VerifiedRustError> {
-    if options.query.trim().len() < 2 || options.query.len() > 64
-        || !options.query.bytes().all(|c| c.is_ascii_alphanumeric()
-            || matches!(c, b'_' | b'-' | b' '))
+    if options.query.trim().len() < 2
+        || options.query.len() > 64
+        || !options
+            .query
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b' '))
         || options.function_name.is_empty()
         || options.function_name.len() > 80
-        || !options.function_name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+        || !options
+            .function_name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'_')
         || !(1..=MAX_CANDIDATES).contains(&options.max_candidates)
         || options.exclude_owners.len() > 20
     {
         return Err(VerifiedRustError::Unsafe(
-            "invalid capability query/function name or discovery bounds".into()
+            "invalid capability query/function name or discovery bounds".into(),
         ));
     }
     let registry_meta = fs::symlink_metadata(&options.registry_cache)?;
     if !registry_meta.is_dir() || registry_meta.file_type().is_symlink() {
         return Err(VerifiedRustError::Unsafe(
-            "Cargo registry cache must be a regular directory".into()
+            "Cargo registry cache must be a regular directory".into(),
         ));
     }
     let mut search = Command::new("cargo");
@@ -269,7 +276,10 @@ pub fn discover_external_rust(
     let mut candidates = Vec::new();
     let mut inspected = 0usize;
     let mut rejected = 0usize;
-    let excluded = options.exclude_owners.iter().map(|owner| owner.to_ascii_lowercase())
+    let excluded = options
+        .exclude_owners
+        .iter()
+        .map(|owner| owner.to_ascii_lowercase())
         .collect::<BTreeSet<_>>();
     let mut seen_repos = BTreeSet::new();
     for package in hits.into_iter().take(MAX_INFO_REQUESTS) {
@@ -278,7 +288,14 @@ pub fn discover_external_rust(
         }
         inspected += 1;
         let mut info = Command::new("cargo");
-        info.args(["info", &package, "--registry", "crates-io", "--color", "never"]);
+        info.args([
+            "info",
+            &package,
+            "--registry",
+            "crates-io",
+            "--color",
+            "never",
+        ]);
         let details = match bounded_command(&mut info, "cargo info") {
             Ok(details) => details,
             Err(_) => {
@@ -290,8 +307,8 @@ pub fn discover_external_rust(
             rejected += 1;
             continue;
         };
-        let Some(repo) = info_field(&details, "repository")
-            .and_then(|url| GitHubRepository::parse(url).ok())
+        let Some(repo) =
+            info_field(&details, "repository").and_then(|url| GitHubRepository::parse(url).ok())
         else {
             rejected += 1;
             continue;
@@ -304,7 +321,10 @@ pub fn discover_external_rust(
             continue;
         }
         let Some(public_symbol) = public_symbol_from_sources(
-            &options.registry_cache, &package, &version, &options.function_name
+            &options.registry_cache,
+            &package,
+            &version,
+            &options.function_name,
         ) else {
             rejected += 1;
             continue;
@@ -355,16 +375,24 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("composer-discovery-{}", uuid::Uuid::new_v4()));
         let crate_dir = dir.join("src/index.crates.io-test/example-1.2.3/src");
         fs::create_dir_all(&crate_dir).unwrap();
-        fs::write(crate_dir.join("lib.rs"),
-            "pub mod metrics;\npub fn direct(a: i32) -> i32 { a }\n// pub fn fake() {}\n"
-        ).unwrap();
-        fs::write(crate_dir.join("metrics.rs"),
-            "pub fn jaro(a: &str, b: &str) -> f64 { if a == b {1.0} else {0.0} }\n"
-        ).unwrap();
-        assert_eq!(public_symbol_from_sources(&dir, "example", "1.2.3", "jaro").as_deref(),
-            Some("metrics::jaro"));
-        assert_eq!(public_symbol_from_sources(&dir, "example", "1.2.3", "direct").as_deref(),
-            Some("direct"));
+        fs::write(
+            crate_dir.join("lib.rs"),
+            "pub mod metrics;\npub fn direct(a: i32) -> i32 { a }\n// pub fn fake() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            crate_dir.join("metrics.rs"),
+            "pub fn jaro(a: &str, b: &str) -> f64 { if a == b {1.0} else {0.0} }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            public_symbol_from_sources(&dir, "example", "1.2.3", "jaro").as_deref(),
+            Some("metrics::jaro")
+        );
+        assert_eq!(
+            public_symbol_from_sources(&dir, "example", "1.2.3", "direct").as_deref(),
+            Some("direct")
+        );
         assert!(public_symbol_from_sources(&dir, "example", "1.2.3", "fake").is_none());
         fs::remove_dir_all(dir).unwrap();
     }
