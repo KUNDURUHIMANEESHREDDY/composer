@@ -244,9 +244,10 @@ pub(crate) fn infer_typed_git_signature(
         .filter(|candidate| {
             candidate.name == upstream_symbol
                 && candidate.parameters.len() <= 4
-                && candidate.parameters.iter().all(|ty| {
-                    ty == "&str" || (allowed_type(ty) && ty != "()" && ty != "&str")
-                })
+                && candidate
+                    .parameters
+                    .iter()
+                    .all(|ty| ty == "&str" || (allowed_type(ty) && ty != "()" && ty != "&str"))
                 && allowed_type(&candidate.result)
                 && candidate.result != "&str"
         });
