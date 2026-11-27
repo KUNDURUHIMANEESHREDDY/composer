@@ -59,13 +59,15 @@ def prepare(target: Path, root: Path) -> None:
     shutil.copytree(target, pref, ignore=shutil.ignore_patterns(".git"))
     manifest = pref / "Cargo.toml"
     old = manifest.read_text()
-    assert "[dependencies]" in old
-    manifest.write_text(old.replace(
-        "[dependencies]",
+    new_dependency = (
         '[dependencies]\ncomposer_git_rust_algorithm_club = { package = "rust-algorithm-club", '
-        f'git = "{UPSTREAM}", rev = "{UPSTREAM_SHA}" }}',
-        1,
-    ))
+        f'git = "{UPSTREAM}", rev = "{UPSTREAM_SHA}" }}'
+    )
+    if "[dependencies]" in old:
+        manifest.write_text(old.replace("[dependencies]", new_dependency, 1))
+    else:
+        # Standalone third-party library may have zero existing dependencies.
+        manifest.write_text(old.rstrip() + "\n\n" + new_dependency + "\n")
     run("cargo", "fetch", "--manifest-path", str(manifest),
         "--target", "x86_64-unknown-linux-gnu", timeout=180)
     assert (GIT_CACHE / "checkouts").is_dir() and CACHE.is_dir()
