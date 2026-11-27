@@ -264,19 +264,23 @@ def main():
         if TARGET == "rustls/rustls":
             # Reject a modified binary fixture in the pinned target checkout,
             # rather than trusting all .bin files or disabling upstream tests.
-            tampered, _ = target_copy(target, base, "tampered-fixture", lock)
-            fixture = tampered / "rustls/src/testdata/handshake-test.1.bin"
-            fixture.write_bytes(fixture.read_bytes() + bytes([0]))
-            rejected, unpublished = verify(
-                tampered, upstream, base, "tampered-fixture",
-                "number_theory::euler_totient", require_success=False
-            )
-            assert rejected.returncode != 0 and not unpublished.exists()
-            assert "modified or untracked pinned Rustls test fixtures" in rejected.stderr, (
-                "tampered public binary fixture must be rejected before Docker verification",
-                rejected.stderr[-1600:],
-            )
-            print("PASS modified Rustls binary fixture rejected, no publication", flush=True)
+            for label, relative in [
+                ("tampered-fixture", "rustls/src/testdata/handshake-test.1.bin"),
+                ("tampered-corpus", "fuzz/corpus/message/Alert.10280050250016901720.bin"),
+            ]:
+                tampered, _ = target_copy(target, base, label, lock)
+                fixture = tampered / relative
+                fixture.write_bytes(fixture.read_bytes() + bytes([0]))
+                rejected, unpublished = verify(
+                    tampered, upstream, base, label,
+                    "number_theory::euler_totient", require_success=False
+                )
+                assert rejected.returncode != 0 and not unpublished.exists()
+                assert "modified or untracked pinned Rustls test fixtures" in rejected.stderr, (
+                    "tampered public test input must be rejected before Docker verification",
+                    rejected.stderr[-1600:],
+                )
+                print(f"PASS modified Rustls {relative} rejected, no publication", flush=True)
         print("EVIDENCE_JSON " + json.dumps({
             "target": TARGET, "pinned_target_commit": pinned,
             "upstream": UPSTREAM_URL, "pinned_upstream_commit": UPSTREAM_SHA,

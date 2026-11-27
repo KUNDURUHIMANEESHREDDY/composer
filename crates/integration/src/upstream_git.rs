@@ -58,6 +58,7 @@ fn copy_pinned_rustls_test_fixtures(
         "test-ca",
         "rustls/src/testdata",
         "rustls/tests/data",
+        "fuzz/corpus/message",
     ])?;
     if !changed.is_empty() {
         return Err(VerifiedRustError::Unsafe(
@@ -114,6 +115,15 @@ fn copy_pinned_rustls_test_fixtures(
                 "Rustls public fixture is no longer a regular tracked file".into(),
             ));
         }
+        // Do not trust index flags such as assume-unchanged as evidence that
+        // checkout bytes match the reviewed Git tree object.
+        if git(&["hash-object", "--no-filters", "--", path])?
+            != object.trim_start_matches("100644 blob ")
+        {
+            return Err(VerifiedRustError::Unsafe(
+                "Rustls public test fixture bytes differ from pinned Git blob".into(),
+            ));
+        }
         count += 1;
         total += meta.len();
         if count > 200 || total > 512 * 1024 {
@@ -133,19 +143,30 @@ fn copy_pinned_rustls_test_fixtures(
         ));
     }
 
-    // Rustls' full-scope unit tests also use checked-in binary input vectors.
-    // Our generic copier deliberately excludes binary files; admit only these
-    // two exact immutable upstream Git trees, never arbitrary target .bin files.
-    for (directory, expected_tree, expected_count) in [
+    // Rustls' full-scope tests use pinned binary vectors and a checked-in
+    // fuzz corpus. The generic copier still excludes arbitrary binary files;
+    // only these three reviewed Git trees are eligible for staging.
+    for (directory, expected_tree, expected_count, max_files, max_bytes) in [
         (
             "rustls/src/testdata",
             "303a8ed419e6d11d6afdb804872a3365f980a12a",
             19_usize,
+            24_usize,
+            64 * 1024_u64,
         ),
         (
             "rustls/tests/data",
             "618385f9ab2292bf918fcb610afd3016165db536",
             3_usize,
+            24_usize,
+            64 * 1024_u64,
+        ),
+        (
+            "fuzz/corpus/message",
+            "de92d93a709629828d1fdb21f58df11588216ada",
+            502_usize,
+            512_usize,
+            1024 * 1024_u64,
         ),
     ] {
         let tree_ref = format!("HEAD:{directory}");
@@ -201,9 +222,18 @@ fn copy_pinned_rustls_test_fixtures(
                     "Rustls binary fixture is not a regular tracked file".into(),
                 ));
             }
+            // Match actual bytes to the exact tracked blob, even if Git's
+            // index was manipulated to hide a modified fuzz input.
+            if git(&["hash-object", "--no-filters", "--", path])?
+                != object.trim_start_matches("100644 blob ")
+            {
+                return Err(VerifiedRustError::Unsafe(
+                    "Rustls public binary bytes differ from pinned Git blob".into(),
+                ));
+            }
             fixture_count += 1;
             fixture_bytes += meta.len();
-            if fixture_count > 24 || fixture_bytes > 64 * 1024 {
+            if fixture_count > max_files || fixture_bytes > max_bytes {
                 return Err(VerifiedRustError::Unsafe(
                     "Rustls binary fixture count or size exceeded".into(),
                 ));
