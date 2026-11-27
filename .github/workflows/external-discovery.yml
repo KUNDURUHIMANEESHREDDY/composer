@@ -1,0 +1,46 @@
+name: Read-only external crate discovery acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/external-discovery.yml
+      - apps/cli/src/external_discovery.rs
+      - apps/cli/src/main.rs
+      - apps/cli/Cargo.toml
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compile and test discovery without network
+        run: cargo test -p composer-cli --bin composer --locked
+      - name: Discover a real third-party crate from crates.io
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo run --locked --quiet -p composer-cli -- discover-external-crates luhn --limit 10 > external-candidates.json
+          python3 - <<'PY'
+          import json
+          with open("external-candidates.json", encoding="utf-8") as file:
+              report = json.load(file)
+          assert report["selection_status"] == "read_only_candidates_not_verified"
+          assert report["candidates"], "Cargo registry search found no external candidates"
+          for item in report["candidates"]:
+              assert item["status"] == "requires_source_license_and_behavior_review"
+              assert item["published_version_unverified"]
+          print("PASS external read-only Cargo registry lookup:", len(report["candidates"]), "candidates")
+          PY
+      - name: Preserve real registry response or diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: read-only-external-candidates
+          path: external-candidates.json
+          if-no-files-found: warn
