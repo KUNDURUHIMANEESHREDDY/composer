@@ -5,9 +5,9 @@ use composer_core::ProjectSpec;
 use composer_integration::{
     BatchRustOptions, ExternalDiscoveryOptions, IntegrationOptions, RustWiringOptions,
     UpstreamCrateOptions, UpstreamRecoveryCandidate, UpstreamRecoveryOptions, VerifiedRustOptions,
-    apply_integration, compose_verified_rust, compose_verified_rust_batch,
-    discover_external_rust, discover_rust_api_contracts, plan_integration,
-    recover_upstream_crate, verify_capsule, verify_upstream_crate, wire_rust_module,
+    apply_integration, compose_verified_rust, compose_verified_rust_batch, discover_external_rust,
+    discover_rust_api_contracts, plan_integration, recover_upstream_crate, verify_capsule,
+    verify_upstream_crate, wire_rust_module,
 };
 use composer_intelligence::{
     CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
@@ -458,7 +458,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             })?;
             if report.candidates.is_empty() {
                 println!("{}", serde_json::to_string_pretty(&report)?);
-                return Err("no statically supported external function candidates; nothing published".into());
+                return Err(
+                    "no statically supported external function candidates; nothing published"
+                        .into(),
+                );
             }
             // Recovery reads the raw candidate array; never overwrite a prior review.
             let mut file = fs::OpenOptions::new()
