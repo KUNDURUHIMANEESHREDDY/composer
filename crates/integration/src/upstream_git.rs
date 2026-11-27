@@ -118,9 +118,17 @@ fn git_read(path: &Path, args: &[&str]) -> Result<String, VerifiedRustError> {
             "core.untrackedCache=false",
         ])
         .args(args)
+        // Third-party Git metadata must not inherit operator-global filter
+        // commands or environment-injected Git configuration.
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ASKPASS", "")
-        .env("GIT_OPTIONAL_LOCKS", "0");
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+        .env("GIT_ATTR_NOSYSTEM", "1")
+        .env_remove("GIT_CONFIG_PARAMETERS")
+        .env_remove("GIT_CONFIG_COUNT")
+        .env_remove("GIT_EXTERNAL_DIFF");
     let out = command
         .output()
         .map_err(|err| VerifiedRustError::Unsafe(format!("Git metadata unavailable: {err}")))?;
@@ -132,6 +140,26 @@ fn git_read(path: &Path, args: &[&str]) -> Result<String, VerifiedRustError> {
     String::from_utf8(out.stdout)
         .map(|value| value.trim().to_owned())
         .map_err(|_| VerifiedRustError::Unsafe("non-UTF8 Git metadata".into()))
+}
+
+/// Git status can run executable clean filters from checkout-local Git
+/// configuration. Git's own config reader is safe for discovery; refuse any
+/// executable filter before Git considers the untrusted worktree's attributes.
+fn reject_host_git_filter_commands(checkout: &Path) -> Result<(), VerifiedRustError> {
+    let keys = git_read(checkout, &["config", "--includes", "--list", "--name-only"])?;
+    for key in keys.lines() {
+        let key = key.trim().to_ascii_lowercase();
+        if key.starts_with("filter.")
+            && (key.ends_with(".clean")
+                || key.ends_with(".smudge")
+                || key.ends_with(".process"))
+        {
+            return Err(VerifiedRustError::Unsafe(
+                "checkout Git filter helper configuration cannot execute on the host".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn checkout_license(
@@ -151,6 +179,9 @@ fn checkout_license(
             "reviewed checkout HEAD differs from requested Git SHA".into(),
         ));
     }
+    // Scan effective repository-local + included config before Git status.
+    // System/global configuration is already disabled in git_read().
+    reject_host_git_filter_commands(checkout)?;
     if !git_read(
         checkout,
         &["status", "--porcelain", "--untracked-files=all"],
@@ -585,6 +616,61 @@ mod tests {
             !marker.exists(),
             "host Git metadata executed repository-controlled fsmonitor code"
         );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checkout_filter_commands_are_refused_without_executing_host_helpers() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = std::env::temp_dir().join(format!("composer-git-filter-{}", Uuid::new_v4()));
+        let checkout = base.join("repo");
+        fs::create_dir_all(&checkout).unwrap();
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(&checkout)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git fixture error: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.name", "Composer CI"]);
+        git(&["config", "user.email", "composer-tests@example.invalid"]);
+        fs::write(checkout.join(".gitattributes"), "payload.txt filter=attack\n").unwrap();
+        fs::write(checkout.join("payload.txt"), "verified source\n").unwrap();
+        git(&["add", ".gitattributes", "payload.txt"]);
+        git(&["commit", "-qm", "original clean checkout"]);
+
+        let marker = base.join("filter-executed-on-host");
+        let helper = base.join("malicious-clean.sh");
+        fs::write(
+            &helper,
+            format!("#!/bin/sh\nprintf ran > '{}'\ncat\n", marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+        git(&["config", "filter.attack.clean", helper.to_str().unwrap()]);
+        assert!(reject_host_git_filter_commands(&checkout).is_err());
+        assert!(!marker.exists(), "configured filter executed during config scan");
+
+        // Git config include.path can load another checkout-controlled filter.
+        git(&["config", "--unset", "filter.attack.clean"]);
+        let extra = base.join("included-config");
+        fs::write(
+            &extra,
+            format!("[filter \"attack\"]\nclean = {}\n", helper.display()),
+        )
+        .unwrap();
+        git(&["config", "include.path", extra.to_str().unwrap()]);
+        assert!(reject_host_git_filter_commands(&checkout).is_err());
+        assert!(!marker.exists(), "included Git filter executed during config scan");
         fs::remove_dir_all(base).unwrap();
     }
 
