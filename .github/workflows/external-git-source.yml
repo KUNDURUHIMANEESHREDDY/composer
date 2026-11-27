@@ -1,0 +1,34 @@
+name: Verified external Git capability adoption
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/external-git-source.yml
+      - tests/test_external_git_source_public.py
+      - crates/integration/**
+      - apps/cli/**
+  push:
+    branches:
+      - feat/verified-cargo-git-reuse
+    paths:
+      - .github/workflows/external-git-source.yml
+      - tests/test_external_git_source_public.py
+      - crates/integration/**
+      - apps/cli/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verified-git:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Pre-provision pinned offline Docker Rust image
+        run: docker pull rust:1.99-slim
+      - name: Verify pinned Git source reuse with independent target tests
+        run: python3 -u tests/test_external_git_source_public.py
