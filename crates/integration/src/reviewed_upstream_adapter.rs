@@ -61,6 +61,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn borrowed_string_adapter_preserves_upstream_scalar_result_types() {
+        let jaro = reviewed_string_adapter(
+            "composer_git_strsim",
+            "jaro",
+            "ported_jaro",
+            Some("ported_jaro(String,String)->f64"),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(jaro.contains("pub fn ported_jaro(arg0: ::std::string::String, arg1: ::std::string::String) -> f64"));
+        assert!(jaro.contains("composer_git_strsim::jaro(arg0.as_str(), arg1.as_str())"));
+
+        let predicate = reviewed_string_adapter(
+            "upstream",
+            "matches",
+            "all_equal",
+            Some("all_equal(String,String)->bool"),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(predicate.contains("-> bool"));
+        assert!(predicate.contains("matches(arg0.as_str(), arg1.as_str())"));
+
+        let scalar = reviewed_string_adapter(
+            "upstream",
+            "length",
+            "byte_length",
+            Some("byte_length(String)->u64"),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(scalar.contains("-> u64"));
+
+        for invalid in [
+            "ported_jaro(String,String)->&str",
+            "ported_jaro(String,String)->Vec<u8>",
+            "ported_jaro(String,String)->Result<f64,()>",
+            "ported_jaro(&mut String,String)->f64",
+            "ported_jaro(String,String)->f64;panic!()",
+        ] {
+            assert!(
+                reviewed_string_adapter("composer_git_strsim", "jaro", "ported_jaro", Some(invalid))
+                    .is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
     fn uses_existing_signature_parser_and_refuses_unreviewed_expressions() {
         let generated = reviewed_string_adapter(
             "composer_git_deunicode",
