@@ -16,12 +16,14 @@ use uuid::Uuid;
 use crate::{RustWiringOptions, verify_capsule, wire::wire_rust_module_for_verified_sandbox};
 
 const DEFAULT_IMAGE: &str = "rust:1.99-slim";
+const SYSTEM_LIBS_IMAGE: &str = "docker.io/library/rust@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07";
 const NIGHTLY_IMAGE: &str = "docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab";
 
 fn validated_verifier_image(value: Option<&str>) -> Result<&'static str, VerifiedRustError> {
     match value {
         None | Some("stable") => Ok(DEFAULT_IMAGE),
         Some("nightly-2026-11-25") => Ok(NIGHTLY_IMAGE),
+        Some("stable-system-libs") => Ok(SYSTEM_LIBS_IMAGE),
         _ => Err(VerifiedRustError::Unsafe(
             "unsupported COMPOSER_VERIFIER_TOOLCHAIN".into(),
         )),
@@ -48,6 +50,10 @@ fn verifier_toolchain_is_allowlisted() {
     assert_eq!(
         validated_verifier_image(Some("nightly-2026-11-25")).unwrap(),
         NIGHTLY_IMAGE
+    );
+    assert_eq!(
+        validated_verifier_image(Some("stable-system-libs")).unwrap(),
+        SYSTEM_LIBS_IMAGE
     );
     assert!(validated_verifier_image(Some("nightly")).is_err());
     assert!(validated_verifier_image(Some("arbitrary/image")).is_err());
@@ -1137,6 +1143,56 @@ pub(crate) fn selected_verifier_memory_mb() -> Result<u32, VerifiedRustError> {
     }
 }
 
+fn validated_verifier_features(input: Option<&str>) -> Result<bool, VerifiedRustError> {
+    match input {
+        None | Some("default") => Ok(false),
+        Some("all") => Ok(true),
+        _ => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_FEATURES; only default or all permitted".into(),
+        )),
+    }
+}
+
+pub(crate) fn selected_verifier_features() -> Result<bool, VerifiedRustError> {
+    match std::env::var("COMPOSER_VERIFIER_FEATURES") {
+        Ok(value) => validated_verifier_features(Some(&value)),
+        Err(std::env::VarError::NotPresent) => validated_verifier_features(None),
+        Err(_) => Err(VerifiedRustError::Unsafe(
+            "COMPOSER_VERIFIER_FEATURES must be UTF-8".into(),
+        )),
+    }
+}
+
+fn validated_verifier_cpus(input: Option<&str>) -> Result<u32, VerifiedRustError> {
+    match input {
+        None | Some("1") => Ok(1),
+        Some("2") => Ok(2),
+        _ => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_CPUS; only 1 or 2 permitted".into(),
+        )),
+    }
+}
+
+pub(crate) fn selected_verifier_cpus() -> Result<u32, VerifiedRustError> {
+    match std::env::var("COMPOSER_VERIFIER_CPUS") {
+        Ok(value) => validated_verifier_cpus(Some(&value)),
+        Err(std::env::VarError::NotPresent) => validated_verifier_cpus(None),
+        Err(_) => Err(VerifiedRustError::Unsafe(
+            "COMPOSER_VERIFIER_CPUS must be UTF-8".into(),
+        )),
+    }
+}
+
+#[test]
+fn bounded_verifier_features_and_cpus() {
+    assert!(!validated_verifier_features(None).unwrap());
+    assert!(validated_verifier_features(Some("all")).unwrap());
+    assert!(validated_verifier_features(Some("none")).is_err());
+    assert_eq!(validated_verifier_cpus(None).unwrap(), 1);
+    assert_eq!(validated_verifier_cpus(Some("2")).unwrap(), 2);
+    assert!(validated_verifier_cpus(Some("4")).is_err());
+}
+
 fn docker_build_internal(
     staged: &Path,
     results: &Path,
@@ -1153,14 +1209,22 @@ fn docker_build_internal(
     // cannot run in the pinned stable-Rust, resource-bounded verifier. Default
     // remains all-targets; do not silently downgrade failed verification.
     const SCRIPT_ALL: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
+    const SCRIPT_ALL_FEATURES: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets --all-features >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets --all-features; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
     const SCRIPT_CONTRACT: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --lib --tests >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --lib --tests; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
-    let script = if contract_focused {
-        SCRIPT_CONTRACT
-    } else {
-        SCRIPT_ALL
+    let all_features = selected_verifier_features()?;
+    let script = match (contract_focused, all_features) {
+        (false, true) => SCRIPT_ALL_FEATURES,
+        (true, false) => SCRIPT_CONTRACT,
+        (false, false) => SCRIPT_ALL,
+        (true, true) => {
+            return Err(VerifiedRustError::Unsafe(
+                "all-features with contract-focused scope is unsupported".into(),
+            ));
+        }
     };
     let memory_mb = selected_verifier_memory_mb()?;
     let memory_limit = format!("--memory={memory_mb}m");
+    let cpu_limit = format!("--cpus={}", selected_verifier_cpus()?);
     let work_tmpfs = format!("--tmpfs=/work:rw,nosuid,nodev,exec,mode=1777,size={memory_mb}m");
     let name = format!("composer-verify-{}", Uuid::new_v4().simple());
     let mut cmd = Command::new("docker");
@@ -1178,7 +1242,7 @@ fn docker_build_internal(
         "--security-opt=no-new-privileges",
         "--pids-limit=64",
         &memory_limit,
-        "--cpus=1",
+        &cpu_limit,
         "--user",
         container_user,
         "--workdir=/work",

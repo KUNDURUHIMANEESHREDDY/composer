@@ -600,6 +600,8 @@ pub fn verify_upstream_git(
             "offline_tests_passed": true,
             "network_disabled": true,
             "docker_memory_limit_mb": crate::verified::selected_verifier_memory_mb()?,
+            "docker_cpu_limit": crate::verified::selected_verifier_cpus()?,
+            "docker_all_features": crate::verified::selected_verifier_features()?,
             "verification_scope": if options.contract_focused { "library_and_integration_tests" } else { "all_targets" },
             "third_party_benchmarks_verified": !options.contract_focused,
             "docker_image_id": image_id,

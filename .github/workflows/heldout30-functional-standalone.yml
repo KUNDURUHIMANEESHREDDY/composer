@@ -25,30 +25,67 @@ jobs:
       matrix:
         include:
           - case: bytes
+            toolchain: nightly-2026-11-25
+            features: default
+            cpus: 1
             repository: tokio-rs/bytes
           - case: serde-json
+            toolchain: stable
+            features: default
+            cpus: 1
             repository: serde-rs/json
           - case: hashbrown
+            toolchain: stable
+            features: default
+            cpus: 1
             repository: rust-lang/hashbrown
           - case: httparse
+            toolchain: stable
+            features: default
+            cpus: 1
             repository: seanmonstar/httparse
           - case: rand
+            toolchain: stable
+            features: default
+            cpus: 1
             repository: rust-random/rand
           - case: smol
+            toolchain: stable-system-libs
+            features: default
+            cpus: 1
             repository: smol-rs/smol
           - case: hyper
+            toolchain: stable
+            features: all
+            cpus: 2
             repository: hyperium/hyper
           - case: mini-redis
+            toolchain: stable
+            features: default
+            cpus: 2
             repository: tokio-rs/mini-redis
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Preload existing offline Docker verifier
-        run: bash scripts/prefetch-pinned-rust-verifier.sh
+        shell: bash
+        run: |
+          set -euo pipefail
+          case '${{ matrix.toolchain }}' in
+            stable) bash scripts/prefetch-pinned-rust-verifier.sh ;;
+            nightly-2026-11-25)
+              docker pull --platform=linux/amd64 docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab ;;
+            stable-system-libs)
+              docker pull --platform=linux/amd64 docker.io/library/rust@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07 ;;
+            *) exit 1 ;;
+          esac
       - name: Three full-scope integrations and wrong-behavior rejection
         shell: bash
         env:
           COMPOSER_VERIFIER_MEMORY_MB: '4096'
+          COMPOSER_VERIFIER_TOOLCHAIN: ${{ matrix.toolchain }}
+          COMPOSER_VERIFIER_FEATURES: ${{ matrix.features }}
+          COMPOSER_VERIFIER_CPUS: ${{ matrix.cpus }}
         run: |
           set -euo pipefail
           python3 -u tests/test_heldout30_functional_standalone.py \

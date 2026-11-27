@@ -103,7 +103,11 @@ def verify(working: Path, upstream: Path, base: Path, name: str,
 def main():
     cases = json.loads(COHORT.read_text(encoding="utf-8"))["repos"]
     pinned = next(entry["sha"] for entry in cases if entry["repo"] == TARGET)
-    image = "docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab" if os.getenv("COMPOSER_VERIFIER_TOOLCHAIN") == "nightly-2026-11-25" else "rust:1.99-slim"
+    images = {
+        "nightly-2026-11-25": "docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab",
+        "stable-system-libs": "docker.io/library/rust@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07",
+    }
+    image = images.get(os.getenv("COMPOSER_VERIFIER_TOOLCHAIN"), "rust:1.99-slim")
     run("docker", "image", "inspect", image)
     with tempfile.TemporaryDirectory(prefix="composer-heldout30-behavioral-") as tmp:
         base = Path(tmp)
@@ -143,6 +147,8 @@ def main():
             evidence = json.loads((output / "composer-upstream-git-evidence.json").read_text())
             assert evidence["network_disabled"] and evidence["offline_tests_passed"]
             assert evidence["docker_image_reference"] == image
+            assert evidence["docker_cpu_limit"] == int(os.getenv("COMPOSER_VERIFIER_CPUS", "1"))
+            assert evidence["docker_all_features"] is (os.getenv("COMPOSER_VERIFIER_FEATURES", "default") == "all")
             assert evidence["verification_scope"] == expected_scope
             assert evidence["docker_memory_limit_mb"] == int(os.getenv("COMPOSER_VERIFIER_MEMORY_MB", "1024"))
             assert evidence["third_party_benchmarks_verified"] is (not CONTRACT_FOCUSED)
