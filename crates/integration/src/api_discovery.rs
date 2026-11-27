@@ -267,7 +267,7 @@ fn parse_function(node: Node<'_>, source: &str, file: &Path, module: &str) -> Op
     }
     let after = source.get(args.end_byte()..body.start_byte())?.trim();
     let result = after.strip_prefix("->").map(str::trim).unwrap_or("()");
-    if !allowed_type(result) || (after != "" && !after.starts_with("->")) {
+    if !allowed_type(result) || (!after.is_empty() && !after.starts_with("->")) {
         return None;
     }
     Some(ApiFunction {
