@@ -221,7 +221,7 @@ def main() -> None:
             "public-geometry",
             "geometry::closest_points=ImportedClosestPoints",
             geometry_contract,
-            expected_source_sha=GEOMETRY_SHA,
+            expected_sha=GEOMETRY_SHA,
         ), "Cross-repository geometry integration failed"
 
         # Separate negative compatibility probes. These targets declare
