@@ -25,42 +25,52 @@ jobs:
       matrix:
         include:
           - case: regex
+            timeout: 240
             features: default
             toolchain: stable
             repository: rust-lang/regex
           - case: rayon
+            timeout: 240
             features: default
             toolchain: stable
             repository: rayon-rs/rayon
           - case: http
+            timeout: 240
             features: default
             toolchain: stable
             repository: hyperium/http
           - case: clap
+            timeout: 240
             features: default
             toolchain: stable
             repository: clap-rs/clap
           - case: indexmap
+            timeout: 240
             features: default
             toolchain: nightly-2026-11-25
             repository: bluss/indexmap
           - case: walkdir
+            timeout: 240
             features: default
             toolchain: stable
             repository: BurntSushi/walkdir
           - case: syn
+            timeout: 900
             features: all
             toolchain: nightly-rustc-dev-2026-11-25
             repository: dtolnay/syn
           - case: uuid
+            timeout: 240
             features: default
             toolchain: nightly-gungraun-0.20.0
             repository: uuid-rs/uuid
           - case: crossbeam
+            timeout: 240
             features: default
             toolchain: stable
             repository: crossbeam-rs/crossbeam
           - case: thiserror
+            timeout: 240
             features: default
             toolchain: stable
             repository: dtolnay/thiserror
@@ -85,6 +95,7 @@ jobs:
           COMPOSER_VERIFIER_MEMORY_MB: '4096'
           COMPOSER_VERIFIER_TOOLCHAIN: ${{ matrix.toolchain }}
           COMPOSER_VERIFIER_FEATURES: ${{ matrix.features }}
+          COMPOSER_VERIFIER_TIMEOUT_SECS: ${{ matrix.timeout }}
         run: |
           set -euo pipefail
           python3 -u tests/test_heldout30_functional_workspace_root.py \

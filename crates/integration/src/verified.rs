@@ -74,7 +74,7 @@ fn verifier_toolchain_is_allowlisted() {
 const MAX_FILES: usize = 1500;
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_LOG_CHARS: usize = 16000;
-const TIMEOUT: Duration = Duration::from_secs(240);
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(240);
 
 #[derive(Debug, Clone)]
 pub struct VerifiedRustOptions {
@@ -1272,6 +1272,43 @@ pub(crate) fn selected_verifier_features() -> Result<bool, VerifiedRustError> {
     }
 }
 
+fn validated_verifier_timeout_secs(input: Option<&str>) -> Result<Duration, VerifiedRustError> {
+    match input {
+        None | Some("240") => Ok(DEFAULT_TIMEOUT),
+        Some("900") => Ok(Duration::from_secs(900)),
+        _ => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_TIMEOUT_SECS; only 240 or 900 permitted".into(),
+        )),
+    }
+}
+
+pub(crate) fn selected_verifier_timeout_secs() -> Result<u64, VerifiedRustError> {
+    let timeout = match std::env::var("COMPOSER_VERIFIER_TIMEOUT_SECS") {
+        Ok(value) => validated_verifier_timeout_secs(Some(&value)),
+        Err(std::env::VarError::NotPresent) => validated_verifier_timeout_secs(None),
+        Err(_) => Err(VerifiedRustError::Unsafe(
+            "COMPOSER_VERIFIER_TIMEOUT_SECS must be UTF-8".into(),
+        )),
+    }?;
+    Ok(timeout.as_secs())
+}
+
+#[test]
+fn verifier_timeout_is_explicitly_bounded() {
+    assert_eq!(
+        validated_verifier_timeout_secs(None).unwrap(),
+        DEFAULT_TIMEOUT
+    );
+    assert_eq!(
+        validated_verifier_timeout_secs(Some("900"))
+            .unwrap()
+            .as_secs(),
+        900
+    );
+    assert!(validated_verifier_timeout_secs(Some("0")).is_err());
+    assert!(validated_verifier_timeout_secs(Some("unlimited")).is_err());
+}
+
 fn validated_verifier_pids(input: Option<&str>) -> Result<u32, VerifiedRustError> {
     match input {
         None | Some("64") => Ok(64),
@@ -1400,12 +1437,25 @@ fn docker_build_internal(
     // The fixed -p selector runs the selected member's test contract.
     // No user-controlled shell source is evaluated; the package comes from
     // Cargo's parsed, bounded package.name field and a quoted env var.
+    // The source archive was prefetched into the explicitly selected image at
+    // build time. Its COMMIT marker is checked before the normal, complete
+    // all-features/all-targets Rust test run. Never grant runtime network.
+    const SCRIPT_SYN_RUST_SOURCE: &str = "set -eu; cp -R /input/. /work/; test \"$(cat /opt/composer-syn-rust-source/COMMIT)\" = b6839f4d0e2bd63b960bbff8619c6fdea27d81e5; mkdir -p /work/tests; test ! -e /work/tests/rust; ln -s /opt/composer-syn-rust-source /work/tests/rust; if cargo test --locked --offline --all-targets --all-features >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets --all-features; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
     const SCRIPT_MEMBER: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets -p \"$COMPOSER_VERIFIER_PACKAGE\" >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets -p \"$COMPOSER_VERIFIER_PACKAGE\"; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2 -p \"$COMPOSER_VERIFIER_PACKAGE\"; cp Cargo.lock /results/Cargo.lock";
     // This is the same independently verified member integration and
     // full test scope, with Cargo's own all-features switch explicitly selected.
     const SCRIPT_MEMBER_ALL_FEATURES: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets --all-features -p \"$COMPOSER_VERIFIER_PACKAGE\" >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets --all-features -p \"$COMPOSER_VERIFIER_PACKAGE\"; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2 -p \"$COMPOSER_VERIFIER_PACKAGE\"; cp Cargo.lock /results/Cargo.lock";
     let all_features = selected_verifier_features()?;
-    let script = if workspace_member_package.is_some() {
+    let is_syn_test_image = selected_verifier_image()? == RUSTC_DEV_IMAGE;
+    let script = if is_syn_test_image {
+        if workspace_member_package.is_some() || contract_focused || !all_features {
+            return Err(VerifiedRustError::Unsafe(
+                "pinned Syn source verifier requires root-package all-features/all-targets scope"
+                    .into(),
+            ));
+        }
+        SCRIPT_SYN_RUST_SOURCE
+    } else if workspace_member_package.is_some() {
         if contract_focused {
             return Err(VerifiedRustError::Unsafe(
                 "workspace member verifier cannot exclude binary or benchmark test targets".into(),
@@ -1541,11 +1591,13 @@ fn docker_build_internal(
     }
 
     let started = Instant::now();
+    let timeout = Duration::from_secs(selected_verifier_timeout_secs()?);
     let result = loop {
-        if started.elapsed() > TIMEOUT {
-            break Err(VerifiedRustError::Docker(
-                "isolated build exceeded 240-second limit".into(),
-            ));
+        if started.elapsed() > timeout {
+            break Err(VerifiedRustError::Docker(format!(
+                "isolated build exceeded {}-second limit",
+                timeout.as_secs()
+            )));
         }
         let status = Command::new("docker")
             .args([

@@ -221,6 +221,7 @@ def main():
             assert evidence["docker_image_reference"] == image
             assert evidence["docker_cpu_limit"] == int(os.getenv("COMPOSER_VERIFIER_CPUS", "1"))
             assert evidence["docker_pids_limit"] == int(os.getenv("COMPOSER_VERIFIER_PIDS", "64"))
+            assert evidence["docker_timeout_seconds"] == int(os.getenv("COMPOSER_VERIFIER_TIMEOUT_SECS", "240"))
             assert evidence["docker_all_features"] is (os.getenv("COMPOSER_VERIFIER_FEATURES", "default") == "all")
             assert evidence["docker_rustflags_profile"] == os.getenv("COMPOSER_VERIFIER_RUSTFLAGS_PROFILE", "default")
             assert evidence["cargo_workspace_root_package"] is EXPECT_WORKSPACE

@@ -898,6 +898,7 @@ pub fn verify_upstream_git(
             "docker_memory_limit_mb": crate::verified::selected_verifier_memory_mb()?,
             "docker_cpu_limit": crate::verified::selected_verifier_cpus()?,
             "docker_pids_limit": crate::verified::selected_verifier_pids()?,
+            "docker_timeout_seconds": crate::verified::selected_verifier_timeout_secs()?,
             "docker_all_features": crate::verified::selected_verifier_features()?,
             "docker_rustflags_profile": crate::verified::selected_verifier_rustflags_profile()?,
             "cargo_workspace_root_package": cargo.get("workspace").is_some(),
