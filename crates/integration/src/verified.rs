@@ -145,6 +145,7 @@ pub fn compose_verified_rust(
             target_root: staged.clone(),
             license_reviewed: true,
         })?;
+        preserve_source_attribution(&capsule.manifest, &capsule.root, &staged)?;
         let image_id = inspect_local_image_id()?;
         let user = nonroot_container_user()?;
         let start = Instant::now();
@@ -226,7 +227,21 @@ pub fn compose_verified_rust(
 fn copy_bounded_target(source: &Path, output: &Path) -> Result<(), VerifiedRustError> {
     let mut total_files = 0usize;
     let mut total_bytes = 0u64;
-    for name in ["Cargo.toml", "Cargo.lock", "build.rs"] {
+    for name in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "build.rs",
+        "README.md",
+        "LICENSE",
+        "LICENSE-MIT",
+        "LICENSE-APACHE",
+        "LICENSE.md",
+        "LICENSE.txt",
+        "COPYING",
+        "NOTICE",
+        "NOTICE.md",
+        "composer-source-attributions.json",
+    ] {
         let source_file = source.join(name);
         if source_file.exists() {
             copy_regular(
@@ -242,7 +257,13 @@ fn copy_bounded_target(source: &Path, output: &Path) -> Result<(), VerifiedRustE
             "target Cargo.toml is missing".into(),
         ));
     }
-    for dir in ["src", "tests", "examples", "benches"] {
+    for dir in [
+        "src",
+        "tests",
+        "examples",
+        "benches",
+        "third_party_licenses",
+    ] {
         let source_dir = source.join(dir);
         if source_dir.exists() {
             copy_tree(
@@ -258,6 +279,95 @@ fn copy_bounded_target(source: &Path, output: &Path) -> Result<(), VerifiedRustE
             "target src directory is missing".into(),
         ));
     }
+    Ok(())
+}
+
+/// Keep the original, hash-verified license evidence with every published
+/// source integration. An explicit review flag records human review, not
+/// automated legal clearance. Batch composition preserves this evidence.
+fn preserve_source_attribution(
+    manifest: &CapsuleManifest,
+    capsule_root: &Path,
+    target_root: &Path,
+) -> Result<(), VerifiedRustError> {
+    let licenses = manifest
+        .files
+        .iter()
+        .filter(|file| file.file_kind == "license_evidence")
+        .collect::<Vec<_>>();
+    if licenses.is_empty() || licenses.len() > 8 {
+        return Err(VerifiedRustError::Unsafe(
+            "a reviewed capsule must contain 1-8 original license evidence files".into(),
+        ));
+    }
+    let license_dir = target_root.join("third_party_licenses");
+    fs::create_dir_all(&license_dir)?;
+    let mut notices = Vec::new();
+    for (index, source) in licenses.iter().enumerate() {
+        let original = capsule_root.join(&source.capsule_path);
+        let data = fs::read(&original)?;
+        if data.len() > 512 * 1024 {
+            return Err(VerifiedRustError::Unsafe(
+                "license evidence exceeds the 512 KiB file limit".into(),
+            ));
+        }
+        let name = format!("{}-license-{index}.txt", manifest.capability_id);
+        let destination = license_dir.join(&name);
+        if destination.exists() {
+            return Err(VerifiedRustError::Unsafe(format!(
+                "license output collision: {}",
+                destination.display()
+            )));
+        }
+        fs::write(&destination, data)?;
+        notices.push(serde_json::json!({
+            "original_path": source.source_path,
+            "source_sha256": source.sha256,
+            "published_path": format!("third_party_licenses/{name}"),
+        }));
+    }
+    let provenance_file = target_root.join("composer-source-attributions.json");
+    let mut existing: Vec<serde_json::Value> = if provenance_file.is_file() {
+        serde_json::from_slice(&fs::read(&provenance_file)?)?
+    } else {
+        Vec::new()
+    };
+    if existing.iter().any(|entry| {
+        entry
+            .get("capability_id")
+            .and_then(serde_json::Value::as_str)
+            == Some(&manifest.capability_id)
+    }) {
+        return Err(VerifiedRustError::Unsafe(
+            "source attribution already exists for this capability".into(),
+        ));
+    }
+    let source_files = manifest
+        .files
+        .iter()
+        .filter(|file| file.file_kind == "source")
+        .map(|file| {
+            serde_json::json!({
+                "original_path": file.source_path,
+                "sha256": file.sha256,
+            })
+        })
+        .collect::<Vec<_>>();
+    existing.push(serde_json::json!({
+        "schema_version": 1,
+        "capability_id": manifest.capability_id,
+        "capsule_id": manifest.capsule_id,
+        "source_repository": manifest.source_repository_url,
+        "source_commit_sha": manifest.source_commit_sha,
+        "source_files": source_files,
+        "published_module": format!(
+            "src/composer_{}.rs", manifest.capability_id.replace('-', "_")
+        ),
+        "license_documents": notices,
+        "license_review_asserted_by_caller": true,
+        "automated_legal_clearance": false
+    }));
+    fs::write(provenance_file, serde_json::to_vec_pretty(&existing)?)?;
     Ok(())
 }
 
@@ -340,6 +450,68 @@ fn copy_regular(
     Ok(())
 }
 
+/// For a single-file verified capsule, select only dependency names that
+/// occur as crate paths/imports in that source. This is conservative lexical
+/// selection, NOT semantic resolution; the isolated Rust compiler and Cargo
+/// lockfile checks must still prove a working integration before publication.
+/// Optional features and upstream dev dependencies are not transplanted.
+fn selected_source_direct_dependencies(
+    manifest: &CapsuleManifest,
+    capsule_root: &Path,
+    cargo: &toml::Value,
+) -> Result<std::collections::BTreeMap<String, String>, VerifiedRustError> {
+    let sources = manifest
+        .files
+        .iter()
+        .filter(|item| item.file_kind == "source")
+        .collect::<Vec<_>>();
+    if sources.len() != 1 {
+        return Err(VerifiedRustError::Dependency(
+            "selective dependency inventory requires exactly one source file".into(),
+        ));
+    }
+    let source_file = capsule_root.join(&sources[0].capsule_path);
+    if fs::symlink_metadata(&source_file)?.len() > 1024 * 1024 {
+        return Err(VerifiedRustError::Dependency(
+            "source module is too large for conservative dependency selection".into(),
+        ));
+    }
+    let source = fs::read_to_string(source_file)?;
+    let mut chosen = std::collections::BTreeMap::new();
+    let Some(table) = cargo.get("dependencies") else {
+        return Ok(chosen);
+    };
+    let dependencies = table.as_table().ok_or_else(|| {
+        VerifiedRustError::Dependency("source [dependencies] must be a TOML table".into())
+    })?;
+    for (name, value) in dependencies {
+        let crate_name = name.replace('-', "_");
+        if !source.contains(&format!("{crate_name}::"))
+            && !source.contains(&format!("use {crate_name}"))
+            && !source.contains(&format!("extern crate {crate_name}"))
+        {
+            continue;
+        }
+        let version = value.as_str().ok_or_else(|| {
+            VerifiedRustError::Dependency(format!(
+                "used dependency {name} has unsupported non-string manifest value"
+            ))
+        })?;
+        if version.is_empty()
+            || version.len() > 128
+            || !version
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b" .,=*^~<>+-".contains(&b))
+        {
+            return Err(VerifiedRustError::Dependency(format!(
+                "used dependency {name} has unsupported version string"
+            )));
+        }
+        chosen.insert(name.clone(), version.to_owned());
+    }
+    Ok(chosen)
+}
+
 /// Conservative direct-dependency adoption. No version conflicts are
 /// overwritten, and path, git, registry, build or target-specific dependencies
 /// are not inferred. Cargo performs the actual offline transitive solve later.
@@ -363,26 +535,7 @@ fn merge_direct_cargo_dependencies(
     let source = fs::read_to_string(capsule_root.join(&cargo.capsule_path))?;
     let source_value: toml::Value =
         toml::from_str(&source).map_err(|err| VerifiedRustError::Toml(err.to_string()))?;
-    for unsupported in [
-        "build-dependencies",
-        "dev-dependencies",
-        "target",
-        "workspace",
-    ] {
-        if source_value.get(unsupported).is_some() {
-            return Err(VerifiedRustError::Dependency(format!(
-                "source manifest contains unsupported {unsupported} dependency section"
-            )));
-        }
-    }
-    let source_deps = source_value
-        .get("dependencies")
-        .and_then(toml::Value::as_table)
-        .ok_or_else(|| {
-            VerifiedRustError::Dependency(
-                "source Cargo.toml must have direct [dependencies]".into(),
-            )
-        })?;
+    let source_deps = selected_source_direct_dependencies(manifest, capsule_root, &source_value)?;
     let target_manifest = target_root.join("Cargo.toml");
     let mut target_value: toml::Value = toml::from_str(&fs::read_to_string(&target_manifest)?)
         .map_err(|err| VerifiedRustError::Toml(err.to_string()))?;
@@ -402,12 +555,8 @@ fn merge_direct_cargo_dependencies(
             VerifiedRustError::Dependency("target [dependencies] must be a TOML table".into())
         })?;
     let mut added = Vec::new();
-    for (name, requested) in source_deps {
-        let Some(version) = requested.as_str() else {
-            return Err(VerifiedRustError::Dependency(format!(
-                "{name} has unsupported dependency form; only version strings allowed"
-            )));
-        };
+    for (name, requested) in &source_deps {
+        let version = requested.as_str();
         if version.len() > 128
             || version.is_empty()
             || !version
@@ -423,7 +572,7 @@ fn merge_direct_cargo_dependencies(
                 deps.insert(name.clone(), toml::Value::String(version.to_string()));
                 added.push(format!("{name} = {version}"));
             }
-            Some(existing) if existing == requested => {}
+            Some(existing) if existing.as_str() == Some(version) => {}
             Some(existing) if existing.as_str().is_some() => {
                 // Bounded reconciliation: keep the target's own requirement
                 // and let offline Cargo resolve it. Verify that the LOCKED
@@ -486,19 +635,14 @@ fn verify_locked_source_constraints(
         .ok_or_else(|| {
             VerifiedRustError::Dependency("resolved Cargo.lock has no packages".into())
         })?;
-    let source_deps = source_toml
-        .get("dependencies")
-        .and_then(toml::Value::as_table)
-        .ok_or_else(|| VerifiedRustError::Dependency("source has no [dependencies]".into()))?;
+    let source_deps = selected_source_direct_dependencies(manifest, capsule_root, &source_toml)?;
     let target_deps = target_toml
         .get("dependencies")
         .and_then(toml::Value::as_table)
         .ok_or_else(|| VerifiedRustError::Dependency("target has no [dependencies]".into()))?;
     let mut reconciled = Vec::new();
-    for (name, original) in source_deps {
-        let requirement = original.as_str().ok_or_else(|| {
-            VerifiedRustError::Dependency(format!("{name} has unsupported dependency form"))
-        })?;
+    for (name, requirement) in &source_deps {
+        let requirement = requirement.as_str();
         let parsed = semver::VersionReq::parse(requirement).map_err(|err| {
             VerifiedRustError::Dependency(format!("bad source version {name}: {err}"))
         })?;
@@ -513,7 +657,7 @@ fn verify_locked_source_constraints(
         })?;
         let candidates = packages
             .iter()
-            .filter(|pkg| pkg.get("name").and_then(toml::Value::as_str) == Some(name))
+            .filter(|pkg| pkg.get("name").and_then(toml::Value::as_str) == Some(name.as_str()))
             .collect::<Vec<_>>();
         if candidates.len() != 1 {
             return Err(VerifiedRustError::Dependency(format!(
@@ -761,6 +905,12 @@ mod tests {
         let capsule = root.join("capsule");
         let target = root.join("target");
         fs::create_dir_all(capsule.join("context/manifests")).unwrap();
+        fs::create_dir_all(capsule.join("source/src")).unwrap();
+        fs::write(
+            capsule.join("source/src/feature.rs"),
+            "use serde::Serialize;\npub fn sample<T: Serialize>(_value: T) {}\n",
+        )
+        .unwrap();
         fs::create_dir_all(&target).unwrap();
         fs::write(
             capsule.join("context/manifests/Cargo.toml"),
@@ -782,14 +932,23 @@ mod tests {
             source_commit_sha: None,
             source_tree_sha: None,
             dependency_closure_strategy: "test".into(),
-            files: vec![composer_intelligence::CapsuleFile {
-                source_path: Some(PathBuf::from("Cargo.toml")),
-                capsule_path: "context/manifests/Cargo.toml".into(),
-                file_kind: "dependency_manifest".into(),
-                size_bytes: 0,
-                sha256: String::new(),
-            }],
-            included_source_files: vec![],
+            files: vec![
+                composer_intelligence::CapsuleFile {
+                    source_path: Some(PathBuf::from("Cargo.toml")),
+                    capsule_path: "context/manifests/Cargo.toml".into(),
+                    file_kind: "dependency_manifest".into(),
+                    size_bytes: 0,
+                    sha256: String::new(),
+                },
+                composer_intelligence::CapsuleFile {
+                    source_path: Some(PathBuf::from("src/feature.rs")),
+                    capsule_path: "source/src/feature.rs".into(),
+                    file_kind: "source".into(),
+                    size_bytes: 0,
+                    sha256: String::new(),
+                },
+            ],
+            included_source_files: vec![PathBuf::from("src/feature.rs")],
             included_symbol_ids: vec![],
             external_or_unresolved_imports: vec![],
             unfollowed_symbol_references: vec![],
@@ -858,6 +1017,31 @@ mod tests {
         .unwrap();
         assert_eq!(overlaps.len(), 1);
         assert!(overlaps[0].contains("1.0.228"));
+        // Real-world manifests frequently declare optional/development crates
+        // that the selected standalone module never uses.
+        let source_manifest = capsule.join("context/manifests/Cargo.toml");
+        fs::write(
+            &source_manifest,
+            "[package]\nname='a'\nversion='0.1.0'\n[dependencies]\nserde='1'\nunused_pkg={version='99', optional=true}\n[dev-dependencies]\nquickcheck='1'\n",
+        ).unwrap();
+        let toml_value: toml::Value =
+            toml::from_str(&fs::read_to_string(&source_manifest).unwrap()).unwrap();
+        let selected =
+            selected_source_direct_dependencies(&manifest, &capsule, &toml_value).unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected.get("serde").map(String::as_str), Some("1"));
+        fs::write(
+            &source_manifest,
+            "[package]\nname='a'\nversion='0.1.0'\n[dev-dependencies]\nquickcheck='1'\n",
+        )
+        .unwrap();
+        let empty_manifest: toml::Value =
+            toml::from_str(&fs::read_to_string(&source_manifest).unwrap()).unwrap();
+        assert!(
+            selected_source_direct_dependencies(&manifest, &capsule, &empty_manifest)
+                .unwrap()
+                .is_empty()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
