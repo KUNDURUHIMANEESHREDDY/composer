@@ -1,0 +1,67 @@
+name: Held-out eight standalone Rust targets functional verification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/heldout30-functional-standalone.yml
+      - tests/test_heldout30_functional_anyhow.py
+      - tests/test_heldout30_functional_standalone.py
+      - tests/heldout30_pins.json
+      - crates/integration/**
+      - Cargo.lock
+
+permissions:
+  contents: read
+
+jobs:
+  functional:
+    name: ${{ matrix.case }} / all_targets
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: bytes
+            repository: tokio-rs/bytes
+          - case: serde-json
+            repository: serde-rs/json
+          - case: hashbrown
+            repository: rust-lang/hashbrown
+          - case: httparse
+            repository: seanmonstar/httparse
+          - case: rand
+            repository: rust-random/rand
+          - case: smol
+            repository: smol-rs/smol
+          - case: hyper
+            repository: hyperium/hyper
+          - case: mini-redis
+            repository: tokio-rs/mini-redis
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Preload existing offline Docker verifier
+        run: bash scripts/prefetch-pinned-rust-verifier.sh
+      - name: Three full-scope integrations and wrong-behavior rejection
+        shell: bash
+        env:
+          COMPOSER_VERIFIER_MEMORY_MB: '4096'
+        run: |
+          set -euo pipefail
+          python3 -u tests/test_heldout30_functional_standalone.py \
+            --target-case ${{ matrix.case }} 2>&1 | tee heldout-standalone.log
+          grep -q 'PASS held-out target ${{ matrix.repository }} functional trial 3/3' heldout-standalone.log
+          grep -q '"verification_scope": "all_targets"' heldout-standalone.log
+          grep -q 'PASS wrong-function control rejected, no publication' heldout-standalone.log
+          grep -q 'EVIDENCE_JSON ' heldout-standalone.log
+      - name: Retain success and failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
+        with:
+          name: composer-heldout-standalone-${{ matrix.case }}
+          path: heldout-standalone.log
+          if-no-files-found: warn
+          retention-days: 14
