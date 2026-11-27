@@ -104,6 +104,7 @@ def main() -> None:
         hash_capsule = make_capsule(
             rustc_hash, root, "FxHasher", "src/lib.rs", "auto-hasher",
             {"src/lib.rs"}, expected_sha=hash_sha,
+            license_file="LICENSE-MIT",
         )
         negative = recommend(hash_capsule, target_b, "adapted_totient")
         assert negative["best_suggestion"] is None, negative

@@ -69,7 +69,8 @@ def clone_exact(repo: str, sha: str, dest: Path) -> None:
 
 def make_capsule(source: Path, root: Path, symbol: str,
                  file_path: str, capability: str, required: set[str],
-                 expected_sha: str = SOURCE_SHA) -> Path:
+                 expected_sha: str = SOURCE_SHA,
+                 license_file: str = "LICENSE") -> Path:
     graph = json.loads(cli("analyze", str(source)).stdout)
     seeds = [row["id"] for row in graph["symbols"]
              if row["name"] == symbol
@@ -84,7 +85,7 @@ def make_capsule(source: Path, root: Path, symbol: str,
                 for value in manifest["included_source_files"]}
     assert required.issubset(included), f"Missing module dependency: {required - included}"
     assert manifest["source_commit_sha"] == expected_sha
-    assert "LICENSE" in manifest["license_evidence_files"]
+    assert license_file in manifest["license_evidence_files"]
     assert manifest["license_review_required"] is True
     print(f"CAPSULE {capability} files={len(included)}: {sorted(included)}", flush=True)
     return capsule
