@@ -27,12 +27,15 @@ jobs:
           - case: unicode-segmentation
             repository: unicode-rs/unicode-segmentation
             scope: all_targets
+            memory_mb: 1024
           - case: num-traits
             repository: rust-num/num-traits
             scope: all_targets
+            memory_mb: 1024
           - case: bitflags
             repository: bitflags/bitflags
             scope: library_and_integration_tests
+            memory_mb: 4096
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
@@ -40,6 +43,8 @@ jobs:
         run: bash scripts/prefetch-pinned-rust-verifier.sh
       - name: Repeat three real target-owned behavioral integrations and reject wrong behavior
         shell: bash
+        env:
+          COMPOSER_VERIFIER_MEMORY_MB: ${{ matrix.memory_mb }}
         run: |
           set -euo pipefail
           python3 -u tests/test_heldout30_functional_extra.py \

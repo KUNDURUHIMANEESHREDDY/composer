@@ -50,3 +50,20 @@ rejects floating verifier pulls. This is *image content immutability*, not
 independent audit of official Docker/Rust image maintainers or the Docker daemon.
 Installed Windows runsc acceptance remains blocked. This change must pass
 GitHub Linux CI on the updated SHA before being counted as verified.
+
+## Failure-directed resource admission for large third-party test suites
+
+The initial `bitflags` scoped run failed with linker bus errors and
+`No space left on device (os error 28)` in its 41-case `trybuild`
+compile-test suite; the Docker verifier's `/work` tmpfs default was 1 GiB.
+This is **a verified failure**, not a semantic test pass. Composer now permits
+`COMPOSER_VERIFIER_MEMORY_MB=2048` or `4096` as an **explicit per-run
+resource admission**; the unchanged default remains `1024`. Unsupported,
+zero, negative or unbounded values fail closed. Both the Docker container
+memory limit and ephemeral `/work` tmpfs remain capped and aligned.
+Network remains disabled, source mounts read-only, no-new-privileges and
+capability drop remain intact, and the original full/all-target test scope
+never automatically falls back. The published Git import evidence records the
+actual `docker_memory_limit_mb`. A separate run must prove the higher-memory
+contract-focused case; any default nightly-only benchmark failure continues
+to block a full/all-target compatibility claim.

@@ -230,7 +230,7 @@ pub fn compose_verified_rust(
             read_only_container_root: true,
             unprivileged_user: user.clone(),
             cpu_limit: "1".into(),
-            memory_limit: "1024m".into(),
+            memory_limit: format!("{}m", selected_verifier_memory_mb()?),
             commands: vec![
                 "cargo test --locked --offline --all-targets (initial attempt)".into(),
                 "cargo generate-lockfile --offline (at most once on explicit stale lockfile error)"
@@ -1077,6 +1077,29 @@ fn selected_verifier_runtime() -> Result<Option<&'static str>, VerifiedRustError
     }
 }
 
+/// Keep the default verifier small. Large third-party compile-test suites
+/// may explicitly opt into a bounded 4 GiB container and disposable work tmpfs.
+/// This does not alter the tested Cargo targets, sandbox privileges or network.
+fn validated_verifier_memory_mb(input: Option<&str>) -> Result<u32, VerifiedRustError> {
+    match input {
+        None | Some("1024") => Ok(1024),
+        Some("2048") => Ok(2048),
+        Some("4096") => Ok(4096),
+        _ => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_MEMORY_MB; only 1024, 2048, 4096 permitted".into(),
+        )),
+    }
+}
+
+pub(crate) fn selected_verifier_memory_mb() -> Result<u32, VerifiedRustError> {
+    match std::env::var_os("COMPOSER_VERIFIER_MEMORY_MB") {
+        None => validated_verifier_memory_mb(None),
+        Some(value) => validated_verifier_memory_mb(Some(value.to_str().ok_or_else(|| {
+            VerifiedRustError::Unsafe("COMPOSER_VERIFIER_MEMORY_MB must be UTF-8".into())
+        })?)),
+    }
+}
+
 fn docker_build_internal(
     staged: &Path,
     results: &Path,
@@ -1099,6 +1122,9 @@ fn docker_build_internal(
     } else {
         SCRIPT_ALL
     };
+    let memory_mb = selected_verifier_memory_mb()?;
+    let memory_limit = format!("--memory={memory_mb}m");
+    let work_tmpfs = format!("--tmpfs=/work:rw,nosuid,nodev,exec,mode=1777,size={memory_mb}m");
     let name = format!("composer-verify-{}", Uuid::new_v4().simple());
     let mut cmd = Command::new("docker");
     cmd.args([
@@ -1114,13 +1140,13 @@ fn docker_build_internal(
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
         "--pids-limit=64",
-        "--memory=1024m",
+        &memory_limit,
         "--cpus=1",
         "--user",
         container_user,
         "--workdir=/work",
         "--tmpfs=/tmp:rw,nosuid,nodev,mode=1777,size=256m",
-        "--tmpfs=/work:rw,nosuid,nodev,exec,mode=1777,size=1024m",
+        &work_tmpfs,
         "--log-driver=local",
         "--log-opt=max-size=5m",
         "--log-opt=max-file=2",
@@ -1253,6 +1279,20 @@ fn docker_build_internal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_verifier_memory_cannot_disable_resource_limits() {
+        assert_eq!(validated_verifier_memory_mb(None).unwrap(), 1024);
+        for (value, expected) in [("1024", 1024), ("2048", 2048), ("4096", 4096)] {
+            assert_eq!(validated_verifier_memory_mb(Some(value)).unwrap(), expected);
+        }
+        for invalid in ["", "0", "512", "8192", "1g", "4096 ", "-1", "999999"] {
+            assert!(
+                validated_verifier_memory_mb(Some(invalid)).is_err(),
+                "{invalid}"
+            );
+        }
+    }
 
     #[test]
     fn external_gvisor_runtime_selection_refuses_unknown_or_empty_fallbacks() {

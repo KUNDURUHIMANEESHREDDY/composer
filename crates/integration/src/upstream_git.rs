@@ -599,6 +599,7 @@ pub fn verify_upstream_git(
             "adapter_kind": if typed_bridge.is_some() { "borrow_owned_strings_as_str" } else { "direct_reexport" },
             "offline_tests_passed": true,
             "network_disabled": true,
+            "docker_memory_limit_mb": crate::verified::selected_verifier_memory_mb()?,
             "verification_scope": if options.contract_focused { "library_and_integration_tests" } else { "all_targets" },
             "third_party_benchmarks_verified": !options.contract_focused,
             "docker_image_id": image_id,

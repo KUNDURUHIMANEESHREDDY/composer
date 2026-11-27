@@ -6,6 +6,7 @@ This is one supported case, NOT 30 functional successes or general compatibility
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -141,6 +142,7 @@ def main():
             evidence = json.loads((output / "composer-upstream-git-evidence.json").read_text())
             assert evidence["network_disabled"] and evidence["offline_tests_passed"]
             assert evidence["verification_scope"] == expected_scope
+            assert evidence["docker_memory_limit_mb"] == int(os.getenv("COMPOSER_VERIFIER_MEMORY_MB", "1024"))
             assert evidence["third_party_benchmarks_verified"] is (not CONTRACT_FOCUSED)
             # Some real projects emit enough Cargo tree output to truncate
             # the success summary in the bounded log excerpt. The verifier
