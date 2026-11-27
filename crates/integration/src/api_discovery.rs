@@ -273,6 +273,7 @@ pub(crate) fn infer_typed_git_signature(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn infer_owned_string_target_signature(
     pinned_source: &str,
     upstream_symbol: &str,
