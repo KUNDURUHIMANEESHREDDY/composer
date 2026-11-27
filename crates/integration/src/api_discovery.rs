@@ -211,10 +211,11 @@ pub fn discover_rust_api_contracts(
     })
 }
 
-/// Infer only an exact, top-level, public borrowed-string Rust function using
-/// the existing Tree-sitter parser. This does NOT infer semantic equivalence;
-/// the caller explicitly requests a target-facing owned-String API and must
-/// still provide an independent behavior contract before publishing.
+/// Infer only a top-level, public function with borrowed &str inputs and a
+/// supported owned scalar/boolean/String result using the existing Tree-sitter
+/// Rust parser. This is type-shape inference, never semantic equivalence;
+/// the caller explicitly selects the source symbol and target alias, and
+/// must supply independent behavioral tests before publishing.
 /// Methods, modules, generics, async, unsafe, attrs that alter function shape,
 /// and unsupported argument or return types fail closed.
 pub(crate) fn infer_owned_string_target_signature(
@@ -229,7 +230,21 @@ pub(crate) fn infer_owned_string_target_signature(
         .into_iter()
         .filter(|candidate| {
             candidate.name == upstream_symbol
-                && candidate.result == "String"
+                && matches!(
+                    candidate.result.as_str(),
+                    "String"
+                        | "bool"
+                        | "f32"
+                        | "f64"
+                        | "u8"
+                        | "u16"
+                        | "u32"
+                        | "u64"
+                        | "i8"
+                        | "i16"
+                        | "i32"
+                        | "i64"
+                )
                 && !candidate.parameters.is_empty()
                 && candidate.parameters.iter().all(|ty| ty == "&str")
         });
@@ -238,7 +253,7 @@ pub(crate) fn infer_owned_string_target_signature(
         return None;
     }
     let inputs = vec!["String"; candidate.parameters.len()].join(",");
-    Some(format!("{target_alias}({inputs})->String"))
+    Some(format!("{target_alias}({inputs})->{}", candidate.result))
 }
 
 fn rust_tree(source: &str) -> Option<Tree> {
@@ -493,6 +508,9 @@ mod tests {
 #[cfg(feature = "alloc")]
 pub fn deunicode(s: &str) -> String { s.to_owned() }
 pub fn combine(a: &str, b: &str) -> String { format!("{a}{b}") }
+pub fn similarity(a: &str, b: &str) -> f64 { if a == b { 1.0 } else { 0.0 } }
+pub fn equal(a: &str, b: &str) -> bool { a == b }
+pub fn byte_count(s: &str) -> u64 { s.len() as u64 }
 pub fn wrong(arg: u32) -> String { arg.to_string() }
 pub fn generic<T>(s: &str) -> String { s.to_owned() }
 pub fn reference(s: &str) -> &str { s }
@@ -507,6 +525,18 @@ impl Internal { pub fn method(s: &str) -> String { s.to_owned() } }
         assert_eq!(
             infer_owned_string_target_signature(source, "combine", "concat"),
             Some("concat(String,String)->String".into())
+        );
+        assert_eq!(
+            infer_owned_string_target_signature(source, "similarity", "ported_similarity"),
+            Some("ported_similarity(String,String)->f64".into())
+        );
+        assert_eq!(
+            infer_owned_string_target_signature(source, "equal", "is_equal"),
+            Some("is_equal(String,String)->bool".into())
+        );
+        assert_eq!(
+            infer_owned_string_target_signature(source, "byte_count", "bytes"),
+            Some("bytes(String)->u64".into())
         );
         for unsupported in [
             "wrong",
