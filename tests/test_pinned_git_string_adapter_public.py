@@ -179,7 +179,7 @@ def main():
         filter_script = root / "untrusted-git-clean-filter.sh"
         filter_marker = root / "git-filter-executed-on-host"
         filter_script.write_text(
-            "#!/bin/sh\\n" + f"printf ran > '{filter_marker}'\\n" + "cat\\n",
+            "#!/bin/sh\n" + f"printf ran > '{filter_marker}'\n" + "cat\n",
             encoding="utf-8",
         )
         filter_script.chmod(0o700)
@@ -205,7 +205,7 @@ def main():
 
         included_config = root / "included-third-party-git-config"
         included_config.write_text(
-            '[filter "untrusted"]\\n' + f"process = {filter_script}\\n",
+            '[filter "untrusted"]\n' + f"process = {filter_script}\n",
             encoding="utf-8",
         )
         included_output = root / "must-not-publish-included-filter"
