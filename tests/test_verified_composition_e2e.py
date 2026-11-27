@@ -138,6 +138,83 @@ mod tests { #[test] fn works() { assert_eq!(super::baseline(), 7); } }
         assert not list(root.glob(".composer-batch-*"))
         assert (target / "src/lib.rs").read_bytes() == original
         print("PASS all-or-nothing rollback: second-stage test failure rejects batch")
+        verified_multi_file_case(root)
+
+
+
+def verified_multi_file_case(root: Path) -> None:
+    """Real Rust graph: lib -> math.rs -> math/util.rs, plus crate path rewrite."""
+    source = root / "nested_source"
+    (source / "src/math").mkdir(parents=True)
+    (source / "Cargo.toml").write_text(
+        '[package]\nname="nested_source"\nversion="0.1.0"\nedition="2024"'
+        '\nlicense="MIT"\n[dependencies]\nserde_json="1"\n', encoding="utf-8",
+    )
+    (source / "LICENSE").write_text(
+        "MIT License - controlled original test fixture\n", encoding="utf-8"
+    )
+    (source / "src/lib.rs").write_text(
+        "pub mod math;\n"
+        "pub fn calculate(value: u32) -> u32 { crate::math::double(value) }\n"
+        "#[cfg(test)]\nmod tests {\n"
+        "  #[test] fn root_api() { assert_eq!(super::calculate(21), 42); }\n"
+        "}\n", encoding="utf-8",
+    )
+    (source / "src/math.rs").write_text(
+        "pub mod util;\n"
+        "pub fn double(value: u32) -> u32 { self::util::scale(value) }\n"
+        "pub fn as_json(value: u32) -> String {\n"
+        "  serde_json::to_string(&double(value)).unwrap()\n}\n"
+        "#[cfg(test)]\nmod tests {\n"
+        "  #[test] fn intermediate_api() { assert_eq!(super::double(9), 18); }\n"
+        "}\n", encoding="utf-8",
+    )
+    (source / "src/math/util.rs").write_text(
+        "pub fn scale(value: u32) -> u32 { value * 2 }\n"
+        "#[cfg(test)]\nmod tests {\n"
+        "  #[test] fn nested_leaf() { assert_eq!(super::scale(4), 8); }\n"
+        "}\n", encoding="utf-8",
+    )
+    target = root / "nested_target"
+    (target / "src").mkdir(parents=True)
+    (target / "Cargo.toml").write_text(
+        '[package]\nname="nested_target"\nversion="0.1.0"'
+        '\nedition="2024"\n[dependencies]\n', encoding="utf-8",
+    )
+    (target / "src/lib.rs").write_text(
+        'pub fn baseline() -> u32 { 7 }\n'
+        '#[cfg(test)] mod tests {\n'
+        ' #[test] fn untouched() { assert_eq!(super::baseline(), 7); }\n'
+        '}\n', encoding="utf-8",
+    )
+    original = (target / "src/lib.rs").read_bytes()
+    capsule = make_capsule(root, source, "calculate", "nested-calculator")
+    manifest = json.loads((capsule / "manifest.json").read_text())
+    included = {str(path).replace("\\", "/")
+                for path in manifest["included_source_files"]}
+    assert included == {"src/lib.rs", "src/math.rs", "src/math/util.rs"}, included
+    output = root / "nested_verified"
+    result = json.loads(cli(
+        "verify-rust", str(capsule), str(target), "--output", str(output),
+        "--license-reviewed", "--registry-cache", str(CARGO_CACHE),
+    ))
+    namespace = output / "src/composer_nested_calculator"
+    assert (namespace / "mod.rs").is_file()
+    assert (namespace / "math.rs").is_file()
+    assert (namespace / "math/util.rs").is_file()
+    assert "crate::composer_nested_calculator::math::double(value)" in (
+        namespace / "mod.rs"
+    ).read_text()
+    assert "serde_json = 1" in result["new_dependencies"]
+    assert result["isolated_tests_passed"] is True
+    assert (target / "src/lib.rs").read_bytes() == original
+    assert not (target / "src/composer_nested_calculator").exists()
+    evidence = json.loads((output / "composer-build-evidence.json").read_text())
+    assert "test result: ok." in evidence["log_tail"]
+    attribution = json.loads((output / "composer-source-attributions.json").read_text())
+    assert len(attribution[0]["source_files"]) == 3
+    print("PASS verified 3-file Rust module tree, import rewrite, offline deps, tests")
+
 
 
 if __name__ == "__main__":
