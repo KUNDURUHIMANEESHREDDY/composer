@@ -191,8 +191,8 @@ def main() -> None:
         "verified_git_only_imports": 3,
         "independent_second_source": new,
         "original_tests_and_provenance_gate_unchanged": True,
-        "limitations": "Two pinned public Git-only projects and two unrelated targets "
-                       "are not an unbiased generalization statistic. Both use the same public target. Build attestation "
+        "limitations": "Two pinned public Git-only projects using one shared target "
+                       "are not an unbiased generalization statistic. Build attestation "
                        "covers Composer's Windows executable, not upstream source reputation.",
     }, sort_keys=True), flush=True)
 
