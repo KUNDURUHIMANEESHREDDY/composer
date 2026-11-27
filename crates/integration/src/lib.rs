@@ -13,8 +13,8 @@ mod verify;
 mod wire;
 
 pub use api_discovery::{
-    RustApiDiscoveryError, RustApiDiscoveryReport, RustApiSuggestion,
-    RustTargetRequirement, discover_rust_api_contracts,
+    RustApiDiscoveryError, RustApiDiscoveryReport, RustApiSuggestion, RustTargetRequirement,
+    discover_rust_api_contracts,
 };
 pub use apply::{IntegrationError, IntegrationOptions, IntegrationResult, apply_integration};
 pub use batch::{

@@ -3,8 +3,12 @@
 //! Only explicitly unfinished public library entrypoints are considered target
 //! requirements. Actual execution requires reviewed CLI mappings plus Docker
 //! compiler, contract-test, and publication gates.
-use std::{collections::BTreeSet, fs, path::{Component, Path, PathBuf}};
 use serde::{Deserialize, Serialize};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Component, Path, PathBuf},
+};
 use thiserror::Error;
 use tree_sitter::{Node, Parser, Tree};
 
@@ -78,7 +82,7 @@ pub fn discover_rust_api_contracts(
     let meta = fs::symlink_metadata(&lib)?;
     if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > MAX_TARGET_BYTES {
         return Err(RustApiDiscoveryError::Unsupported(
-            "target requires a regular, non-symlink src/lib.rs of at most 1 MiB".into()
+            "target requires a regular, non-symlink src/lib.rs of at most 1 MiB".into(),
         ));
     }
     let lib_text = fs::read_to_string(&lib)?;
@@ -88,51 +92,62 @@ pub fn discover_rust_api_contracts(
         .take(MAX_INPUT_FUNCTIONS)
         .collect::<Vec<_>>();
 
-    let sources = verified.manifest.files.iter()
+    let sources = verified
+        .manifest
+        .files
+        .iter()
         .filter(|entry| entry.file_kind == "source")
         .collect::<Vec<_>>();
     let multifile = sources.len() > 1;
     let mut source_functions = Vec::new();
     let mut source_bytes = 0;
     for entry in sources {
-        let Some(path) = entry.source_path.as_deref() else { continue; };
+        let Some(path) = entry.source_path.as_deref() else {
+            continue;
+        };
         if path.extension().and_then(|x| x.to_str()) != Some("rs") {
             continue;
         }
-        let Some(module) = module_path(path, multifile) else { continue; };
+        let Some(module) = module_path(path, multifile) else {
+            continue;
+        };
         let original = verified.root.join(&entry.capsule_path);
         let meta = fs::symlink_metadata(&original)?;
         if !meta.is_file() || meta.file_type().is_symlink() {
-            return Err(RustApiDiscoveryError::Unsupported(
-                format!("non-regular source file {}", original.display())
-            ));
+            return Err(RustApiDiscoveryError::Unsupported(format!(
+                "non-regular source file {}",
+                original.display()
+            )));
         }
         source_bytes += meta.len();
         if source_bytes > MAX_SOURCE_BYTES {
             return Err(RustApiDiscoveryError::Unsupported(
-                "selected Rust API source exceeds 4 MiB".into()
+                "selected Rust API source exceeds 4 MiB".into(),
             ));
         }
         let source = fs::read_to_string(original)?;
         source_functions.extend(scan_public_functions(&source, path, &module));
         if source_functions.len() > MAX_INPUT_FUNCTIONS {
             return Err(RustApiDiscoveryError::Unsupported(
-                "selected Rust API contains more than 256 public functions".into()
+                "selected Rust API contains more than 256 public functions".into(),
             ));
         }
     }
-    source_functions.sort_by(|a, b| a.file.cmp(&b.file)
-        .then(a.source_path.cmp(&b.source_path)));
+    source_functions.sort_by(|a, b| a.file.cmp(&b.file).then(a.source_path.cmp(&b.source_path)));
 
     let mut results = Vec::new();
     for target in requirements.drain(..) {
         let mut candidates = Vec::new();
         for source in &source_functions {
-            let Some(ranking) = rank_candidate(&target, source) else { continue; };
+            let Some(ranking) = rank_candidate(&target, source) else {
+                continue;
+            };
             let rule = format!(
                 "{}={}({})->{}",
-                source.source_path, target.name,
-                target.parameters.join(","), target.result,
+                source.source_path,
+                target.name,
+                target.parameters.join(","),
+                target.result,
             );
             candidates.push(RustApiSuggestion {
                 source_file: source.file.clone(),
@@ -144,12 +159,15 @@ pub fn discover_rust_api_contracts(
                 rationale: "Name-token overlap and only fixed-width, infallible primitive widening/identity; does not prove semantic equivalence".into(),
             });
         }
-        candidates.sort_by(|a, b| b.ranking_score.cmp(&a.ranking_score)
-            .then(a.source_file.cmp(&b.source_file))
-            .then(a.source_function.cmp(&b.source_function)));
+        candidates.sort_by(|a, b| {
+            b.ranking_score
+                .cmp(&a.ranking_score)
+                .then(a.source_file.cmp(&b.source_file))
+                .then(a.source_function.cmp(&b.source_function))
+        });
         candidates.truncate(MAX_CANDIDATES);
-        let ambiguous = candidates.len() > 1
-            && candidates[0].ranking_score == candidates[1].ranking_score;
+        let ambiguous =
+            candidates.len() > 1 && candidates[0].ranking_score == candidates[1].ranking_score;
         let best = if !ambiguous && candidates.first().is_some_and(|c| c.ranking_score >= 70) {
             candidates.first().cloned()
         } else {
@@ -184,7 +202,9 @@ pub fn discover_rust_api_contracts(
 
 fn rust_tree(source: &str) -> Option<Tree> {
     let mut parser = Parser::new();
-    parser.set_language(&tree_sitter_rust::LANGUAGE.into()).ok()?;
+    parser
+        .set_language(&tree_sitter_rust::LANGUAGE.into())
+        .ok()?;
     let tree = parser.parse(source, None)?;
     (!tree.root_node().has_error()).then_some(tree)
 }
@@ -192,7 +212,9 @@ fn rust_tree(source: &str) -> Option<Tree> {
 /// Visit root-level functions only. Methods, nested modules, impl blocks,
 /// generics, lifetimes, unsafe and async functions cannot be safely mapped.
 fn scan_public_functions(source: &str, file: &Path, module: &str) -> Vec<ApiFunction> {
-    let Some(tree) = rust_tree(source) else { return Vec::new() };
+    let Some(tree) = rust_tree(source) else {
+        return Vec::new();
+    };
     let root = tree.root_node();
     let mut cursor = root.walk();
     root.named_children(&mut cursor)
@@ -201,20 +223,30 @@ fn scan_public_functions(source: &str, file: &Path, module: &str) -> Vec<ApiFunc
 }
 
 fn parse_function(node: Node<'_>, source: &str, file: &Path, module: &str) -> Option<ApiFunction> {
-    if node.kind() != "function_item" { return None; }
+    if node.kind() != "function_item" {
+        return None;
+    }
     let name = node.child_by_field_name("name")?;
     let args = node.child_by_field_name("parameters")?;
     let body = node.child_by_field_name("body")?;
     let prefix = source.get(node.start_byte()..name.start_byte())?.trim();
     // Conservative: do not infer across visibility, const/async/unsafe, ABI,
     // generics or attributes that alter calling conventions.
-    if prefix != "pub fn" { return None; }
+    if prefix != "pub fn" {
+        return None;
+    }
     let name = name.utf8_text(source.as_bytes()).ok()?;
-    if !identifier(name) { return None; }
+    if !identifier(name) {
+        return None;
+    }
     let body_text = body.utf8_text(source.as_bytes()).ok()?;
-    let compact = body_text.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let compact = body_text
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>();
     let body_is_unimplemented = matches!(
-        compact.as_str(), "{todo!()}" | "{todo!();}" | "{unimplemented!()}" | "{unimplemented!();}"
+        compact.as_str(),
+        "{todo!()}" | "{todo!();}" | "{unimplemented!()}" | "{unimplemented!();}"
     );
     let param_text = source.get(args.start_byte() + 1..args.end_byte().checked_sub(1)?)?;
     let mut params = Vec::new();
@@ -227,7 +259,9 @@ fn parse_function(node: Node<'_>, source: &str, file: &Path, module: &str) -> Op
             params.push(ty.trim().to_owned());
         }
     }
-    if params.len() > 4 { return None; }
+    if params.len() > 4 {
+        return None;
+    }
     let after = source.get(args.end_byte()..body.start_byte())?.trim();
     let result = after.strip_prefix("->").map(str::trim).unwrap_or("()");
     if !allowed_type(result) || (after != "" && !after.starts_with("->")) {
@@ -238,7 +272,9 @@ fn parse_function(node: Node<'_>, source: &str, file: &Path, module: &str) -> Op
         parameters: params,
         result: result.to_owned(),
         file: file.to_path_buf(),
-        source_path: if module.is_empty() { name.to_owned() } else {
+        source_path: if module.is_empty() {
+            name.to_owned()
+        } else {
             format!("{module}::{name}")
         },
         body_is_unimplemented,
@@ -250,20 +286,44 @@ fn identifier(value: &str) -> bool {
     !bytes.is_empty()
         && (bytes[0].is_ascii_alphabetic() || bytes[0] == b'_')
         && value != "_"
-        && bytes.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
 }
 
 fn allowed_type(value: &str) -> bool {
-    matches!(value, "u8" | "u16" | "u32" | "u64" | "u128"
-        | "i8" | "i16" | "i32" | "i64" | "i128"
-        | "f32" | "f64" | "bool" | "char" | "String" | "&str" | "()")
+    matches!(
+        value,
+        "u8" | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "char"
+            | "String"
+            | "&str"
+            | "()"
+    )
 }
 fn safe_into(input: &str, destination: &str) -> bool {
-    if input == destination { return true; }
-    if input == "&str" && destination == "String" { return true; }
+    if input == destination {
+        return true;
+    }
+    if input == "&str" && destination == "String" {
+        return true;
+    }
     let rank = |type_name: &str| -> Option<(u8, usize)> {
         for (prefix, signedness) in [("u", 0), ("i", 1)] {
-            let Some(width) = type_name.strip_prefix(prefix) else { continue };
+            let Some(width) = type_name.strip_prefix(prefix) else {
+                continue;
+            };
             let bits = width.parse::<usize>().ok()?;
             if matches!(bits, 8 | 16 | 32 | 64 | 128) {
                 return Some((signedness, bits));
@@ -276,50 +336,85 @@ fn safe_into(input: &str, destination: &str) -> bool {
         if sign_a == sign_b && bits_a < bits_b)
 }
 fn name_score(a: &str, b: &str) -> u32 {
-    if a == b { return 100; }
-    let tokenize = |name: &str| name.to_ascii_lowercase().split('_')
-        .filter(|part| !part.is_empty())
-        .map(str::to_owned).collect::<BTreeSet<_>>();
+    if a == b {
+        return 100;
+    }
+    let tokenize = |name: &str| {
+        name.to_ascii_lowercase()
+            .split('_')
+            .filter(|part| !part.is_empty())
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>()
+    };
     let a = tokenize(a);
     let b = tokenize(b);
-    if a.is_empty() || b.is_empty() { return 0; }
+    if a.is_empty() || b.is_empty() {
+        return 0;
+    }
     let common = a.intersection(&b).count();
-    if common == 0 { return 0; }
+    if common == 0 {
+        return 0;
+    }
     let longer = a.len().max(b.len());
-    if common == longer { 90 }
-    else if common >= 2 { 80 }
-    else if longer <= 2 { 70 }
-    else { 45 }
+    if common == longer {
+        90
+    } else if common >= 2 {
+        80
+    } else if longer <= 2 {
+        70
+    } else {
+        45
+    }
 }
 fn rank_candidate(target: &ApiFunction, source: &ApiFunction) -> Option<u32> {
-    if target.parameters.len() != source.parameters.len() { return None; }
-    for (target_input, source_input) in target.parameters.iter().zip(&source.parameters) {
-        if !safe_into(target_input, source_input) { return None; }
+    if target.parameters.len() != source.parameters.len() {
+        return None;
     }
-    if !safe_into(&source.result, &target.result) { return None; }
+    for (target_input, source_input) in target.parameters.iter().zip(&source.parameters) {
+        if !safe_into(target_input, source_input) {
+            return None;
+        }
+    }
+    if !safe_into(&source.result, &target.result) {
+        return None;
+    }
     let score = name_score(&source.name, &target.name);
     (score >= 45).then_some(score)
 }
 
 fn module_path(path: &Path, multifile: bool) -> Option<String> {
     let mut components = path.components();
-    let Component::Normal(root) = components.next()? else { return None };
-    if root != "src" { return None; }
+    let Component::Normal(root) = components.next()? else {
+        return None;
+    };
+    if root != "src" {
+        return None;
+    }
     let mut names = Vec::new();
     for part in components {
-        let Component::Normal(value) = part else { return None };
+        let Component::Normal(value) = part else {
+            return None;
+        };
         let value = value.to_str()?;
-        if value.starts_with('.') { return None; }
+        if value.starts_with('.') {
+            return None;
+        }
         names.push(value.to_owned());
     }
     let leaf = names.pop()?;
-    if !leaf.ends_with(".rs") { return None; }
+    if !leaf.ends_with(".rs") {
+        return None;
+    }
     let stem = leaf.strip_suffix(".rs")?;
-    if !multifile { return Some(String::new()); }
+    if !multifile {
+        return Some(String::new());
+    }
     if !matches!(stem, "lib" | "main" | "mod") {
         names.push(stem.into());
     }
-    if !names.iter().all(|x| identifier(x)) { return None; }
+    if !names.iter().all(|x| identifier(x)) {
+        return None;
+    }
     Some(names.join("::"))
 }
 
@@ -328,9 +423,12 @@ mod tests {
     use super::*;
     fn mock(name: &str, p: &[&str], ret: &str) -> ApiFunction {
         ApiFunction {
-            name: name.into(), parameters: p.iter().map(|x| x.to_string()).collect(),
-            result: ret.into(), file: "src/math.rs".into(),
-            source_path: name.into(), body_is_unimplemented: false,
+            name: name.into(),
+            parameters: p.iter().map(|x| x.to_string()).collect(),
+            result: ret.into(),
+            file: "src/math.rs".into(),
+            source_path: name.into(),
+            body_is_unimplemented: false,
         }
     }
 
@@ -352,18 +450,39 @@ pub async fn delayed(x: u32) -> u32 { todo!() }
     }
     #[test]
     fn only_suggests_infallible_widening_with_relevant_names() {
-        assert_eq!(rank_candidate(&mock("totient", &["u32"], "u128"),
-            &mock("totient", &["u64"], "u64")), Some(100));
-        assert_eq!(rank_candidate(&mock("totient", &["u64"], "u32"),
-            &mock("totient", &["u32"], "u64")), None);
-        assert_eq!(rank_candidate(&mock("distance", &["u32"], "u128"),
-            &mock("totient", &["u64"], "u64")), None);
+        assert_eq!(
+            rank_candidate(
+                &mock("totient", &["u32"], "u128"),
+                &mock("totient", &["u64"], "u64")
+            ),
+            Some(100)
+        );
+        assert_eq!(
+            rank_candidate(
+                &mock("totient", &["u64"], "u32"),
+                &mock("totient", &["u32"], "u64")
+            ),
+            None
+        );
+        assert_eq!(
+            rank_candidate(
+                &mock("distance", &["u32"], "u128"),
+                &mock("totient", &["u64"], "u64")
+            ),
+            None
+        );
         assert_eq!(name_score("euler_totient", "adapted_totient"), 70);
     }
     #[test]
     fn module_rules_follow_verified_flat_single_file_layout() {
-        assert_eq!(module_path(Path::new("src/number_theory/euler_totient.rs"), false), Some("".into()));
-        assert_eq!(module_path(Path::new("src/number_theory/euler_totient.rs"), true), Some("number_theory::euler_totient".into()));
+        assert_eq!(
+            module_path(Path::new("src/number_theory/euler_totient.rs"), false),
+            Some("".into())
+        );
+        assert_eq!(
+            module_path(Path::new("src/number_theory/euler_totient.rs"), true),
+            Some("number_theory::euler_totient".into())
+        );
         assert_eq!(module_path(Path::new("src/lib.rs"), true), Some("".into()));
         assert_eq!(module_path(Path::new("../src/lib.rs"), true), None);
     }

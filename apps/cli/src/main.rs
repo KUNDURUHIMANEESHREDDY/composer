@@ -5,8 +5,7 @@ use composer_core::ProjectSpec;
 use composer_integration::{
     BatchRustOptions, IntegrationOptions, RustWiringOptions, VerifiedRustOptions,
     apply_integration, compose_verified_rust, compose_verified_rust_batch,
-    discover_rust_api_contracts, plan_integration,
-    verify_capsule, wire_rust_module,
+    discover_rust_api_contracts, plan_integration, verify_capsule, wire_rust_module,
 };
 use composer_intelligence::{
     CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
