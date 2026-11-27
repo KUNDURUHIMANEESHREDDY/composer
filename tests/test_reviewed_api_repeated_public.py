@@ -127,6 +127,30 @@ def rejection_check(root: Path, source: Path, capsule: Path, target: Path) -> No
         assert response.returncode != 0, (rule, test)
         assert not out.exists(), "Invalid contract published output"
         assert (work / "src/lib.rs").read_bytes() == unchanged
+    # False-completion probe: a deliberately wrong independent assertion
+    # must make the real offline Docker run fail and leave no output.
+    failing = root / "negative-incorrect-behavior"
+    shutil.copytree(work, failing, ignore=shutil.ignore_patterns(".git"))
+    failing_test = failing / "tests/reviewed_contract.rs"
+    failing_test.write_text(
+        "use contest_algorithms::adapted_totient;\n"
+        "#[test] fn rejects_wrong_answer() { "
+        "assert_eq!(adapted_totient(9_u32), 999_u128); }\n",
+        encoding="utf-8",
+    )
+    invalid_output = root / "must-not-publish-false-completion"
+    observed = cli(
+        "verify-rust", str(capsule), str(failing),
+        "--output", str(invalid_output), "--license-reviewed",
+        "--registry-cache", str(CACHE),
+        "--reviewed-api-rule", "euler_totient=adapted_totient(u32)->u128",
+        "--contract-test", "tests/reviewed_contract.rs",
+        require_success=False,
+    )
+    assert observed.returncode != 0, "Incorrect target behavior must fail"
+    assert not invalid_output.exists(), "Incorrect contract must never publish"
+    assert (work / "src/lib.rs").read_bytes() == unchanged
+    print("PASS false-completion probe: deliberately wrong contract failed Docker verification", flush=True)
     print("PASS negative reviewed execution: stale rule, missing contract and traversal rejected", flush=True)
 
 
