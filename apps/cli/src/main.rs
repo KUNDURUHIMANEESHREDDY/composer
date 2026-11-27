@@ -4,10 +4,11 @@ use clap::{Parser, Subcommand};
 use composer_core::ProjectSpec;
 use composer_integration::{
     BatchRustOptions, ExternalDiscoveryOptions, IntegrationOptions, RustWiringOptions,
-    UpstreamCrateOptions, UpstreamRecoveryCandidate, UpstreamRecoveryOptions, VerifiedRustOptions,
-    apply_integration, compose_verified_rust, compose_verified_rust_batch, discover_external_rust,
-    discover_rust_api_contracts, plan_integration, recover_upstream_crate, verify_capsule,
-    verify_upstream_crate, wire_rust_module,
+    UpstreamCrateOptions, UpstreamGitOptions, UpstreamRecoveryCandidate,
+    UpstreamRecoveryOptions, VerifiedRustOptions, apply_integration, compose_verified_rust,
+    compose_verified_rust_batch, discover_external_rust, discover_rust_api_contracts,
+    plan_integration, recover_upstream_crate, verify_capsule, verify_upstream_crate,
+    verify_upstream_git, wire_rust_module,
 };
 use composer_intelligence::{
     CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
@@ -185,6 +186,45 @@ enum Command {
         #[arg(long)]
         upstream_commit: String,
         /// Confirm independent license/source review; not legal clearance.
+        #[arg(long)]
+        license_reviewed: bool,
+    },
+    /// Reuse an exact pinned Git commit from an existing public Rust repository.
+    /// Executes only in Composer's offline Docker verifier; no source regeneration.
+    VerifyExternalGitRust {
+        /// Original standalone target Cargo library (never modified).
+        target: PathBuf,
+        /// New output directory, published only after tests pass.
+        #[arg(long)]
+        output: PathBuf,
+        /// Independently reviewed clean Git source checkout.
+        #[arg(long)]
+        upstream_checkout: PathBuf,
+        /// Canonical public GitHub HTTPS repository URL.
+        #[arg(long)]
+        upstream_repository: String,
+        /// Exact reviewed 40-digit Git commit (not branch/tag).
+        #[arg(long)]
+        upstream_commit: String,
+        /// Upstream Cargo package name.
+        #[arg(long)]
+        package: String,
+        /// Existing upstream public symbol, e.g. jaro or str::jaro.
+        #[arg(long)]
+        public_symbol: String,
+        /// Target API name called by independent tests.
+        #[arg(long)]
+        target_alias: String,
+        /// Existing tests/<name>.rs independently authored contract.
+        #[arg(long)]
+        contract_test: PathBuf,
+        /// Pre-provisioned local Cargo registry directory.
+        #[arg(long)]
+        registry_cache: PathBuf,
+        /// Pre-provisioned local Cargo git/ directory only.
+        #[arg(long)]
+        git_cache: PathBuf,
+        /// Assert independent license/source review; not legal clearance.
         #[arg(long)]
         license_reviewed: bool,
     },
@@ -437,6 +477,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 registry_cache,
                 upstream_repository,
                 upstream_commit,
+                license_reviewed,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::VerifyExternalGitRust {
+            target,
+            output,
+            upstream_checkout,
+            upstream_repository,
+            upstream_commit,
+            package,
+            public_symbol,
+            target_alias,
+            contract_test,
+            registry_cache,
+            git_cache,
+            license_reviewed,
+        } => {
+            let result = verify_upstream_git(&UpstreamGitOptions {
+                target_root: target,
+                output_root: output,
+                upstream_checkout,
+                upstream_repository,
+                upstream_commit,
+                package,
+                public_symbol,
+                target_alias,
+                contract_test,
+                registry_cache,
+                git_cache,
                 license_reviewed,
             })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
