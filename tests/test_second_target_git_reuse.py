@@ -73,9 +73,10 @@ def make_disposable_target(original: Path, root: Path, label: str,
 
 def call_verifier(target: Path, source: Path, root: Path, label: str,
                   public_symbol: str = "number_theory::euler_totient",
+                  required_signer_fingerprint: str | None = None,
                   require_success=True):
     output = root / f"accepted-{label}"
-    result = cli(
+    args = [
         "verify-external-git-rust", str(target),
         "--output", str(output),
         "--upstream-checkout", str(source),
@@ -88,8 +89,10 @@ def call_verifier(target: Path, source: Path, root: Path, label: str,
         "--registry-cache", str(CACHE),
         "--git-cache", str(GIT_CACHE),
         "--license-reviewed",
-        require_success=require_success,
-    )
+    ]
+    if required_signer_fingerprint is not None:
+        args.extend(["--require-upstream-signer-fingerprint", required_signer_fingerprint])
+    result = cli(*args, require_success=require_success)
     return result, output
 
 
@@ -152,11 +155,27 @@ def main():
         print("PASS incorrect but type-compatible upstream rejected with no mutation",
               flush=True)
 
+        # An opt-in identity policy must reject unknown signer fingerprints
+        # rather than accepting a clean but unsigned/untrusted Git commit.
+        signature_response, unsigned_output = call_verifier(
+            negative, upstream, base, "untrusted-signer",
+            required_signer_fingerprint="A" * 40,
+            require_success=False,
+        )
+        assert signature_response.returncode != 0
+        assert ("signature" in signature_response.stderr.lower()
+                or "signer" in signature_response.stderr.lower()), signature_response.stderr[-1800:]
+        assert not unsigned_output.exists()
+        same_bytes(negative, original_bytes)
+        print("PASS unknown or untrusted upstream signing fingerprint rejected",
+              flush=True)
+
         print("EVIDENCE_JSON " + json.dumps({
             "source": UPSTREAM_URL, "source_commit": UPSTREAM_SHA,
             "original_target": SECOND_TARGET, "target_commit": SECOND_TARGET_SHA,
             "independent_target": True, "verified_successes": 1,
             "semantic_control_refused": True, "source_git_objects_verified": True,
+            "unknown_upstream_signer_refused": True,
             "license_preserved": True, "offline_docker": True,
             "originals_unchanged": True,
             "limitations": "Two curated public Rust targets are not general "
