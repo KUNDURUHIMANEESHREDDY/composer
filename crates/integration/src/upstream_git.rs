@@ -48,6 +48,9 @@ pub struct UpstreamGitOptions {
     /// Optional trusted OpenPGP signer fingerprint (40 or 64 hex).
     /// Requiring it rejects unsigned or untrusted upstream commits.
     pub required_signer_fingerprint: Option<String>,
+    /// Explicitly test all library and integration tests, excluding third-party
+    /// benchmarks/examples/binaries. Never automatically lower verification.
+    pub contract_focused: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +75,8 @@ pub struct UpstreamGitResult {
     pub verified_signer_fingerprint: Option<String>,
     pub original_target_unchanged: bool,
     pub offline_tests_passed: bool,
+    /// Explicit verification scope; not equivalent to passing --all-targets.
+    pub verification_scope: String,
     pub evidence_path: PathBuf,
     pub elapsed_seconds: f64,
 }
@@ -473,6 +478,7 @@ pub fn verify_upstream_git(
             &options.git_cache,
             &image_id,
             &container_user,
+            options.contract_focused,
         )?;
         let elapsed = start.elapsed().as_secs_f64();
         let source = validate_git_lock(&results.join("Cargo.lock"), &options.package, &repo, rev)?;
@@ -504,6 +510,8 @@ pub fn verify_upstream_git(
             "target_alias": options.target_alias,
             "offline_tests_passed": true,
             "network_disabled": true,
+            "verification_scope": if options.contract_focused { "library_and_integration_tests" } else { "all_targets" },
+            "third_party_benchmarks_verified": !options.contract_focused,
             "docker_image_id": image_id,
             "original_target_unchanged": true,
             "elapsed_seconds": elapsed,
@@ -533,6 +541,11 @@ pub fn verify_upstream_git(
             verified_signer_fingerprint: signer.clone(),
             original_target_unchanged: true,
             offline_tests_passed: true,
+            verification_scope: if options.contract_focused {
+                "library_and_integration_tests".into()
+            } else {
+                "all_targets".into()
+            },
             evidence_path: output.join(GIT_EVIDENCE),
             elapsed_seconds: elapsed,
         })
@@ -569,6 +582,7 @@ mod tests {
             git_cache: PathBuf::from("missing-git"),
             license_reviewed: false,
             required_signer_fingerprint: None,
+            contract_focused: false,
         };
         assert!(matches!(
             verify_upstream_git(&opts),
