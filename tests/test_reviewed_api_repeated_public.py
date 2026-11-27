@@ -45,11 +45,21 @@ def case(
     ).stdout)
     matched = [req for req in suggestion["requirements"]
                if req["target_function"] == target_function]
-    assert len(matched) == 1 and matched[0]["best_suggestion"], (
-        label, iteration, matched
-    )
-    exact_rule = matched[0]["best_suggestion"]["suggested_cli_rule"]
-    assert exact_rule == expected_rule, (exact_rule, expected_rule)
+    assert len(matched) == 1, (label, iteration, matched)
+    selected = [candidate for candidate in matched[0]["candidates"]
+                if candidate["suggested_cli_rule"] == expected_rule]
+    assert len(selected) == 1, (label, iteration, matched)
+    if matched[0]["best_suggestion"] is None:
+        # Type-only, unrelated-name candidate: never auto-selected.
+        assert selected[0]["ranking_score"] < 70
+        assert matched[0]["status"] in (
+            "review_required_no_automatic_selection",
+            "ambiguous_candidates_no_automatic_selection",
+        )
+    else:
+        # Name-aligned candidate: still requires manual acceptance and tests.
+        assert matched[0]["best_suggestion"]["suggested_cli_rule"] == expected_rule
+    exact_rule = selected[0]["suggested_cli_rule"]
     discovered_ms = round((perf_counter() - begin) * 1000, 1)
 
     output = root / f"verified-{label}-{iteration}"
@@ -183,15 +193,15 @@ def main() -> None:
         outcomes = []
         for iteration in range(1, REPEATS + 1):
             outcomes.append(case(
-                root, iteration, "totient-ebtech", algo, totient, ebtech,
+                root, iteration, "renamed-coprime-ebtech", algo, totient, ebtech,
                 "contest_algorithms",
-                "pub fn adapted_totient(n: u32) -> u128 { todo!() }\n",
-                "use contest_algorithms::adapted_totient;\n"
+                "pub fn coprime_count(n: u32) -> u128 { todo!() }\n",
+                "use contest_algorithms::coprime_count;\n"
                 "#[test] fn matches_number_theory_contract() {\n"
-                "assert_eq!(adapted_totient(9_u32), 6_u128);\n"
-                "assert_eq!(adapted_totient(10_u32), 4_u128);\n"
-                "assert_eq!(adapted_totient(13_u32), 12_u128);\n}\n",
-                "adapted_totient", "euler_totient=adapted_totient(u32)->u128",
+                "assert_eq!(coprime_count(9_u32), 6_u128);\n"
+                "assert_eq!(coprime_count(10_u32), 4_u128);\n"
+                "assert_eq!(coprime_count(13_u32), 12_u128);\n}\n",
+                "coprime_count", "euler_totient=coprime_count(u32)->u128",
             ))
             outcomes.append(case(
                 root, iteration, "cube-rustc-hash", algo, cube, hash_target, "rustc_hash",

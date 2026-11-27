@@ -39,12 +39,24 @@ pub(crate) fn validate_reviewed_api(
             "reviewed target function is missing or ambiguous".into(),
         ));
     }
-    let best = matches[0].best_suggestion.as_ref().ok_or_else(|| {
-        VerifiedRustError::Unsafe("no unique, supported recommendation for reviewed API".into())
-    })?;
-    if best.suggested_cli_rule != rule {
+    // A type-compatible, name-unrelated source may be explicitly selected
+    // by a reviewer, but is NEVER chosen automatically. Recompute it from
+    // current, verified source and enforce the same independent test gate.
+    let requirement = matches[0];
+    let selected = requirement
+        .candidates
+        .iter()
+        .find(|candidate| candidate.suggested_cli_rule == rule);
+    if selected.is_none() {
         return Err(VerifiedRustError::Unsafe(
-            "reviewed rule differs from freshly recomputed recommendation".into(),
+            "reviewed rule is absent from freshly recomputed type-compatible candidates".into(),
+        ));
+    }
+    if let Some(best) = requirement.best_suggestion.as_ref()
+        && best.suggested_cli_rule != rule
+    {
+        return Err(VerifiedRustError::Unsafe(
+            "reviewed rule differs from unique high-confidence recommendation".into(),
         ));
     }
     validate_contract_test(target, contract_test, &spec.name)?;
@@ -80,6 +92,14 @@ fn validate_contract_test(
         return Err(VerifiedRustError::Unsafe(
             "target disables automatic integration tests; contract test not guaranteed to execute"
                 .into(),
+        ));
+    }
+    // Explicit [[test]] targets can disable the harness, point to a different
+    // file or be skipped by required-features. Fail closed rather than merely
+    // compiling a test file that Cargo never runs.
+    if cargo.get("test").is_some() {
+        return Err(VerifiedRustError::Unsafe(
+            "explicit Cargo [[test]] configuration requires independent test-runner review".into(),
         ));
     }
     let test_dir = target.join("tests");
@@ -182,58 +202,47 @@ fn contains_disabling_attributes(node: tree_sitter::Node<'_>, code: &str) -> boo
         .any(|child| contains_disabling_attributes(child, code))
 }
 
-// Tree-sitter recognizes macro token trees as structured syntax: a target
-// identifier followed by a parenthesized token tree represents a call in
-// assert!(...), assert_eq!(...) or assert_ne!(...). No comment or literal
-// string can satisfy this check.
+// Require a direct invocation as the first assertion argument. A target
+// name nested in stringify!, a closure that never executes, or another macro
+// must not make a vacuous assertion look like a behavioral contract. This
+// deliberately rejects more complex expressions pending manual review.
 fn has_target_assertion(node: tree_sitter::Node<'_>, code: &str, function: &str) -> bool {
+    // An uncalled helper, closure, or async block is not proof that an
+    // assertion runs under the integration-test harness.
+    if matches!(
+        node.kind(),
+        "closure_expression" | "function_item" | "async_block" | "async_block_expression"
+    ) {
+        return false;
+    }
     if node.kind() == "macro_invocation" {
         let macro_name = node
             .child_by_field_name("macro")
             .and_then(|name| name.utf8_text(code.as_bytes()).ok());
-        if matches!(macro_name, Some("assert" | "assert_eq" | "assert_ne"))
-            && contains_target_call(node, code, function)
-        {
-            return true;
+        if matches!(macro_name, Some("assert" | "assert_eq" | "assert_ne")) {
+            let mut cursor = node.walk();
+            let arguments = node
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "token_tree");
+            if let Some(text) = arguments.and_then(|a| a.utf8_text(code.as_bytes()).ok())
+                && let Some(body) = text.strip_prefix('(')
+            {
+                let compact = body
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect::<String>();
+                if (compact.starts_with(&format!("{function}("))
+                    || compact.starts_with(&format!("crate::{function}(")))
+                    && compact.matches(&format!("{function}(")).count() == 1
+                {
+                    return true;
+                }
+            }
         }
     }
     let mut cursor = node.walk();
     node.named_children(&mut cursor)
         .any(|child| has_target_assertion(child, code, function))
-}
-
-fn contains_target_call(node: tree_sitter::Node<'_>, code: &str, function: &str) -> bool {
-    if node.kind() == "call_expression"
-        && node
-            .child_by_field_name("function")
-            .and_then(|f| f.utf8_text(code.as_bytes()).ok())
-            .is_some_and(|name| name.rsplit("::").next() == Some(function))
-    {
-        return true;
-    }
-    let mut cursor = node.walk();
-    let children = node.named_children(&mut cursor).collect::<Vec<_>>();
-    if node.kind() == "token_tree"
-        && children.windows(2).any(|pair| {
-            pair[0].kind() == "identifier"
-                && pair[0].utf8_text(code.as_bytes()).ok() == Some(function)
-                && pair[1].kind() == "token_tree"
-                && code[..pair[0].start_byte()]
-                    .bytes()
-                    .rev()
-                    .find(|byte| !byte.is_ascii_whitespace())
-                    != Some(b'.')
-                && pair[1]
-                    .utf8_text(code.as_bytes())
-                    .ok()
-                    .is_some_and(|text| text.starts_with('('))
-        })
-    {
-        return true;
-    }
-    children
-        .into_iter()
-        .any(|child| contains_target_call(child, code, function))
 }
 
 /// Replace ONLY the body of a plain top-level public function that is still
@@ -426,6 +435,13 @@ mod tests {
             "#[test] fn unrelated() { assert_eq!(1, 1); } // wanted(1)",
             "#[test] fn unrelated() { let _ = wanted(1); assert_eq!(1, 1); }",
             "#[test] fn unrelated() { assert_eq!(other.wanted(1), 2); }",
+            "#[test] fn unrelated() { assert_eq!(stringify!(wanted(1)), \"wanted(1)\"); }",
+            "#[test] fn unrelated() { assert_eq!(1, 1); let f = || wanted(1); }",
+            "#[test] fn unrelated() { assert_eq!(1, wanted(1)); }",
+            "#[test] fn unrelated() { assert_eq!(wanted(1), wanted(1)); }",
+            "#[test] fn unrelated() { assert_eq!(wanted (1), wanted (1)); }",
+            "#[test] fn unrelated() { let unused = || assert_eq!(wanted(1), 2); }",
+            "#[test] fn unrelated() { fn unused() { assert_eq!(wanted(1), 2); } }",
             "#[test] #[should_panic] fn check() { assert_eq!(wanted(1), 2); }",
             "#[test] #[cfg(any())] fn check() { assert_eq!(wanted(1), 2); }",
             "#[ignore] #[test] fn check() { assert_eq!(wanted(1), 2); }",
@@ -459,6 +475,22 @@ mod tests {
         )
         .unwrap();
         assert!(validate_contract_test(&root, Path::new("tests/contract.rs"), "wanted").is_err());
+        fs::write(root.join("Cargo.toml"), original_manifest.clone()).unwrap();
+        for explicit in [
+            "[[test]]\nname='contract'\npath='tests/contract.rs'\nharness=false\n",
+            "[[test]]\nname='contract'\npath='tests/contract.rs'\nrequired-features=['optional']\n",
+            "[[test]]\nname='unrelated'\npath='tests/unrelated.rs'\n",
+        ] {
+            fs::write(
+                root.join("Cargo.toml"),
+                format!("{original_manifest}{explicit}"),
+            )
+            .unwrap();
+            assert!(
+                validate_contract_test(&root, Path::new("tests/contract.rs"), "wanted").is_err(),
+                "explicit Cargo test configuration was accepted: {explicit}"
+            );
+        }
         fs::write(root.join("Cargo.toml"), original_manifest).unwrap();
         for path in ["../escape.rs", "tests/../../escape.rs", "src/lib.rs"] {
             assert!(validate_contract_test(&root, Path::new(path), "wanted").is_err());
