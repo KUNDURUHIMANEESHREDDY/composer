@@ -25,33 +25,43 @@ jobs:
       matrix:
         include:
           - case: regex
+            features: default
             toolchain: stable
             repository: rust-lang/regex
           - case: rayon
+            features: default
             toolchain: stable
             repository: rayon-rs/rayon
           - case: http
+            features: default
             toolchain: stable
             repository: hyperium/http
           - case: clap
+            features: default
             toolchain: stable
             repository: clap-rs/clap
           - case: indexmap
+            features: default
             toolchain: nightly-2026-11-25
             repository: bluss/indexmap
           - case: walkdir
+            features: default
             toolchain: stable
             repository: BurntSushi/walkdir
           - case: syn
+            features: all
             toolchain: stable
             repository: dtolnay/syn
           - case: uuid
+            features: default
             toolchain: nightly-2026-11-25
             repository: uuid-rs/uuid
           - case: crossbeam
+            features: default
             toolchain: stable
             repository: crossbeam-rs/crossbeam
           - case: thiserror
+            features: default
             toolchain: stable
             repository: dtolnay/thiserror
     steps:
@@ -72,6 +82,7 @@ jobs:
         env:
           COMPOSER_VERIFIER_MEMORY_MB: '4096'
           COMPOSER_VERIFIER_TOOLCHAIN: ${{ matrix.toolchain }}
+          COMPOSER_VERIFIER_FEATURES: ${{ matrix.features }}
         run: |
           set -euo pipefail
           python3 -u tests/test_heldout30_functional_workspace_root.py \

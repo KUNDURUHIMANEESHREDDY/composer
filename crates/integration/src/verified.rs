@@ -459,6 +459,7 @@ pub(crate) fn copy_bounded_target_with_workspace_member(
         "examples".to_owned(),
         "benches".to_owned(),
         "third_party_licenses".to_owned(),
+        "testdata".to_owned(),
     ]);
     for name in workspace_dirs {
         if name.is_empty()
@@ -625,7 +626,7 @@ fn copy_tree(
         } else if kind.is_file() {
             let allowed = matches!(
                 item.extension().and_then(|ext| ext.to_str()),
-                Some("rs" | "json" | "toml" | "txt" | "md" | "sql" | "html" | "snap")
+                Some("rs" | "json" | "toml" | "txt" | "md" | "sql" | "html" | "snap" | "stderr")
             );
             // Exactly one known, public, immutable upstream test certificate
             // is needed by smol's full-scope example compilation. Never copy
