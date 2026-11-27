@@ -209,11 +209,20 @@ fn public_symbol_from_sources(
                 matches.push(exported_name);
             }
         }
-        matches.sort();
+        // A crate may expose the same function name in several public
+        // modules (e.g. textdistance::str::jaro and ::nstr::jaro).
+        // Prefer the root export, then its conventional str:: API.
+        // This is only candidate ranking: independent tests remain mandatory.
+        matches.sort_by_key(|path| {
+            (
+                path.matches("::").count(),
+                !path.starts_with("str::"),
+                path.len(),
+            )
+        });
         matches.dedup();
-        // Only unambiguous public function paths can be suggested.
-        if matches.len() == 1 {
-            return matches.into_iter().next();
+        if let Some(best) = matches.into_iter().next() {
+            return Some(best);
         }
     }
     None
@@ -394,6 +403,24 @@ mod tests {
             Some("direct")
         );
         assert!(public_symbol_from_sources(&dir, "example", "1.2.3", "fake").is_none());
+        // Multiple legitimate public paths are ranked, never considered
+        // semantic proof, and the conventional string API is preferred.
+        fs::write(
+            crate_dir.join("lib.rs"),
+            "pub mod nstr;\npub mod str;\n",
+        ).unwrap();
+        fs::write(
+            crate_dir.join("str.rs"),
+            "pub fn jaro(a: &str, b: &str) -> f64 { if a == b {1.0} else {0.0} }\n",
+        ).unwrap();
+        fs::write(
+            crate_dir.join("nstr.rs"),
+            "pub fn jaro(a: &str, b: &str) -> f64 { if a == b {1.0} else {0.0} }\n",
+        ).unwrap();
+        assert_eq!(
+            public_symbol_from_sources(&dir, "example", "1.2.3", "jaro").as_deref(),
+            Some("str::jaro"),
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 }
