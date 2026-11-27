@@ -3,9 +3,10 @@ use std::{error::Error, fs, net::SocketAddr, path::PathBuf};
 use clap::{Parser, Subcommand};
 use composer_core::ProjectSpec;
 use composer_integration::{
-    BatchRustOptions, IntegrationOptions, RustWiringOptions, UpstreamCrateOptions, VerifiedRustOptions,
-    apply_integration, compose_verified_rust, compose_verified_rust_batch,
-    discover_rust_api_contracts, plan_integration, verify_capsule, verify_upstream_crate, wire_rust_module,
+    BatchRustOptions, IntegrationOptions, RustWiringOptions, UpstreamCrateOptions,
+    VerifiedRustOptions, apply_integration, compose_verified_rust, compose_verified_rust_batch,
+    discover_rust_api_contracts, plan_integration, verify_capsule, verify_upstream_crate,
+    wire_rust_module,
 };
 use composer_intelligence::{
     CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
@@ -365,8 +366,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Command::VerifyExternalRustCrate {
-            target, output, package, version, public_symbol, target_alias,
-            contract_test, registry_cache, upstream_repository, upstream_commit,
+            target,
+            output,
+            package,
+            version,
+            public_symbol,
+            target_alias,
+            contract_test,
+            registry_cache,
+            upstream_repository,
+            upstream_commit,
             license_reviewed,
         } => {
             let result = verify_upstream_crate(&UpstreamCrateOptions {
