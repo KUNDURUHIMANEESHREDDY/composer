@@ -434,6 +434,12 @@ fn preserve_source_attribution(
             })
         })
         .collect::<Vec<_>>();
+    let module = manifest.capability_id.replace('-', "_");
+    let published_module = if source_files.len() > 1 {
+        format!("src/composer_{module}/mod.rs")
+    } else {
+        format!("src/composer_{module}.rs")
+    };
     existing.push(serde_json::json!({
         "schema_version": 1,
         "capability_id": manifest.capability_id,
@@ -441,9 +447,7 @@ fn preserve_source_attribution(
         "source_repository": manifest.source_repository_url,
         "source_commit_sha": manifest.source_commit_sha,
         "source_files": source_files,
-        "published_module": format!(
-            "src/composer_{}.rs", manifest.capability_id.replace('-', "_")
-        ),
+        "published_module": published_module,
         "license_documents": notices,
         "license_review_asserted_by_caller": true,
         "automated_legal_clearance": false
