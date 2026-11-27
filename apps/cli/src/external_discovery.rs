@@ -18,9 +18,9 @@ fn validate_request(query: &str, limit: usize) -> Result<(), Box<dyn Error>> {
         || query.trim().is_empty()
         || query.len() > 160
         || query.split_whitespace().count() > 12
-        || !query.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.')
-        })
+        || !query
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_' | '.'))
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -44,21 +44,16 @@ fn parse_candidates(output: &str, query: &str, limit: usize) -> Vec<Candidate> {
         if package.is_empty()
             || package.len() > 64
             || !package.as_bytes()[0].is_ascii_alphabetic()
-            || !package.bytes().all(|b| {
-                b.is_ascii_lowercase()
-                    || b.is_ascii_digit()
-                    || matches!(b, b'_' | b'-')
-            })
+            || !package
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
         {
             continue;
         }
         let Some((version, suffix)) = details.split_once('"') else {
             continue;
         };
-        if version.is_empty()
-            || version.len() > 64
-            || semver::Version::parse(version).is_err()
-        {
+        if version.is_empty() || version.len() > 64 || semver::Version::parse(version).is_err() {
             continue;
         }
         let Some(description) = suffix.trim().strip_prefix('#') else {
