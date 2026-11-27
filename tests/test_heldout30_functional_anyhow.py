@@ -103,7 +103,8 @@ def verify(working: Path, upstream: Path, base: Path, name: str,
 def main():
     cases = json.loads(COHORT.read_text(encoding="utf-8"))["repos"]
     pinned = next(entry["sha"] for entry in cases if entry["repo"] == TARGET)
-    run("docker", "image", "inspect", "rust:1.99-slim")
+    image = "docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab" if os.getenv("COMPOSER_VERIFIER_TOOLCHAIN") == "nightly-2026-11-25" else "rust:1.99-slim"
+    run("docker", "image", "inspect", image)
     with tempfile.TemporaryDirectory(prefix="composer-heldout30-behavioral-") as tmp:
         base = Path(tmp)
         upstream = base / "thealgorithms-reviewed"
@@ -141,6 +142,7 @@ def main():
             assert UPSTREAM_SHA in (output / "Cargo.lock").read_text()
             evidence = json.loads((output / "composer-upstream-git-evidence.json").read_text())
             assert evidence["network_disabled"] and evidence["offline_tests_passed"]
+            assert evidence["docker_image_reference"] == image
             assert evidence["verification_scope"] == expected_scope
             assert evidence["docker_memory_limit_mb"] == int(os.getenv("COMPOSER_VERIFIER_MEMORY_MB", "1024"))
             assert evidence["third_party_benchmarks_verified"] is (not CONTRACT_FOCUSED)

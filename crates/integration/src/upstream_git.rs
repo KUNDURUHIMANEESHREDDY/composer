@@ -603,6 +603,7 @@ pub fn verify_upstream_git(
             "verification_scope": if options.contract_focused { "library_and_integration_tests" } else { "all_targets" },
             "third_party_benchmarks_verified": !options.contract_focused,
             "docker_image_id": image_id,
+            "docker_image_reference": crate::verified::selected_verifier_image()?,
             "original_target_unchanged": true,
             "elapsed_seconds": elapsed,
             "log_tail": logs,

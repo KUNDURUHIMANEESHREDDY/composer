@@ -16,6 +16,42 @@ use uuid::Uuid;
 use crate::{RustWiringOptions, verify_capsule, wire::wire_rust_module_for_verified_sandbox};
 
 const DEFAULT_IMAGE: &str = "rust:1.99-slim";
+const NIGHTLY_IMAGE: &str = "docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab";
+
+fn validated_verifier_image(value: Option<&str>) -> Result<&'static str, VerifiedRustError> {
+    match value {
+        None | Some("stable") => Ok(DEFAULT_IMAGE),
+        Some("nightly-2026-11-25") => Ok(NIGHTLY_IMAGE),
+        _ => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_TOOLCHAIN".into(),
+        )),
+    }
+}
+
+pub(crate) fn selected_verifier_image() -> Result<&'static str, VerifiedRustError> {
+    match std::env::var("COMPOSER_VERIFIER_TOOLCHAIN") {
+        Ok(value) => validated_verifier_image(Some(&value)),
+        Err(std::env::VarError::NotPresent) => validated_verifier_image(None),
+        Err(_) => Err(VerifiedRustError::Unsafe(
+            "invalid COMPOSER_VERIFIER_TOOLCHAIN".into(),
+        )),
+    }
+}
+
+#[test]
+fn verifier_toolchain_is_allowlisted() {
+    assert_eq!(validated_verifier_image(None).unwrap(), DEFAULT_IMAGE);
+    assert_eq!(
+        validated_verifier_image(Some("stable")).unwrap(),
+        DEFAULT_IMAGE
+    );
+    assert_eq!(
+        validated_verifier_image(Some("nightly-2026-11-25")).unwrap(),
+        NIGHTLY_IMAGE
+    );
+    assert!(validated_verifier_image(Some("nightly")).is_err());
+    assert!(validated_verifier_image(Some("arbitrary/image")).is_err());
+}
 const MAX_FILES: usize = 1500;
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_LOG_CHARS: usize = 16000;
@@ -224,7 +260,7 @@ pub fn compose_verified_rust(
         let evidence = BuildEvidence {
             schema_version: 1,
             capsule_id: wired.capsule_id.clone(),
-            image: DEFAULT_IMAGE.into(),
+            image: selected_verifier_image()?.into(),
             image_id: image_id.clone(),
             network_disabled: true,
             read_only_container_root: true,
@@ -269,7 +305,7 @@ pub fn compose_verified_rust(
             verified_api_signatures,
             reviewed_api_rule,
             reviewed_contract_test,
-            docker_image: DEFAULT_IMAGE.into(),
+            docker_image: selected_verifier_image()?.into(),
             offline_lockfile_resolved: true,
             isolated_tests_passed: true,
             evidence_path: output.join(evidence_name),
@@ -991,13 +1027,14 @@ pub(crate) fn nonroot_container_user() -> Result<String, VerifiedRustError> {
 }
 
 pub(crate) fn inspect_local_image_id() -> Result<String, VerifiedRustError> {
+    let image = selected_verifier_image()?;
     let output = Command::new("docker")
-        .args(["image", "inspect", "--format", "{{.Id}}", DEFAULT_IMAGE])
+        .args(["image", "inspect", "--format", "{{.Id}}", image])
         .output()
         .map_err(|err| VerifiedRustError::Docker(format!("Docker CLI unavailable: {err}")))?;
     if !output.status.success() {
         return Err(VerifiedRustError::Docker(format!(
-            "{DEFAULT_IMAGE} must already be installed locally; no image pull is permitted during verification"
+            "{image} must already be installed locally; no image pull is permitted during verification"
         )));
     }
     let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -1210,7 +1247,7 @@ fn docker_build_internal(
         .map_err(|err| VerifiedRustError::Docker(format!("Docker CLI unavailable: {err}")))?;
     if !launched.status.success() {
         return Err(VerifiedRustError::Docker(format!(
-            "Docker could not start its restricted container (image {DEFAULT_IMAGE} must exist locally): {}",
+            "Docker could not start its restricted container (selected image must exist locally): {}",
             String::from_utf8_lossy(&launched.stderr)
                 .chars()
                 .take(2000)

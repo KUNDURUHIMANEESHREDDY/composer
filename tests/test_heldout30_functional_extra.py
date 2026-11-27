@@ -23,7 +23,7 @@ def main():
         "use anyhow::ported_totient;", f"use {crate_name}::ported_totient;"
     )
     assert "use anyhow::ported_totient;" not in suite.INDEPENDENT_ORACLE
-    if args.target_case == "bitflags":
+    if args.target_case == "bitflags" and suite.os.getenv("COMPOSER_VERIFIER_TOOLCHAIN", "stable") == "stable":
         # This pinned repo contains a nightly-only benchmark. Independently
         # prove default all-targets fails, then opt in to the strictly
         # narrower library/integration-contract scope, never silently.
