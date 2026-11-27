@@ -659,7 +659,28 @@ fn copy_tree(
                     .parent()
                     .is_some_and(|parent| parent.file_name().is_some_and(|n| n == "tests"))
                 && fs::metadata(&item)?.len() <= 512 * 1024;
-            if allowed || reviewed_fixture || test_fuzz_fixture {
+            // The pinned regex repository has extensionless crash/reproducer
+            // inputs used by its existing fuzz regression tests. Only allow
+            // plain, bounded fixtures from tests/fuzz/testdata (not any other
+            // extensionless file; never follow links).
+            let extensionless_regex_fixture = item.extension().is_none()
+                && source.file_name().is_some_and(|n| n == "testdata")
+                && source.parent().is_some_and(|parent| {
+                    parent.file_name().is_some_and(|n| n == "fuzz")
+                        && parent
+                            .parent()
+                            .is_some_and(|root| root.file_name().is_some_and(|n| n == "tests"))
+                })
+                && name.to_str().is_some_and(|filename| {
+                    ["crash-", "minimized-from-", "slow-unit-"]
+                        .iter()
+                        .any(|prefix| filename.starts_with(prefix))
+                        && filename
+                            .bytes()
+                            .all(|ch| ch.is_ascii_alphanumeric() || ch == b'-' || ch == b'_')
+                })
+                && fs::metadata(&item)?.len() <= 512 * 1024;
+            if allowed || reviewed_fixture || test_fuzz_fixture || extensionless_regex_fixture {
                 copy_regular(&item, &destination.join(name), files, bytes)?;
             }
         } else {
