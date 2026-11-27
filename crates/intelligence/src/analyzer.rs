@@ -473,11 +473,16 @@ fn rust_candidates(root: &Path, source_file: &Path, target: &str) -> Vec<PathBuf
         .trim()
         .trim_end_matches("::");
 
-    // A bare "mod name" declaration is resolved beside the declaring module.
+    // Rust modules declared inside foo.rs are loaded from foo/name.rs.
+    // Crate roots and mod.rs instead load their children from siblings.
     if !cleaned.contains("::") {
         let mut candidates = Vec::new();
         if let Some(parent) = source_file.parent() {
-            add_rust_module_candidates(&mut candidates, parent, cleaned);
+            let dir = match source_file.file_stem().and_then(|s| s.to_str()) {
+                Some("lib" | "main" | "mod") | None => parent.to_path_buf(),
+                Some(stem) => parent.join(stem),
+            };
+            add_rust_module_candidates(&mut candidates, &dir, cleaned);
         }
         return candidates;
     }
@@ -847,4 +852,25 @@ fn enclosing_scope_match_wins_over_other_classes() {
 
     assert_eq!(resolution, SymbolResolution::ScopedNameMatch);
     assert_eq!(resolved.as_deref(), Some("method-a"));
+
+    #[test]
+    fn resolves_rust_file_backed_nested_module_paths() {
+        let files = HashSet::from([
+            PathBuf::from("src/lib.rs"),
+            PathBuf::from("src/math.rs"),
+            PathBuf::from("src/math/util.rs"),
+        ]);
+        let (from_root, root_files) = resolve_import(
+            Path::new("."), Path::new("src/lib.rs"),
+            SourceLanguage::Rust, "math", &files, &[],
+        );
+        assert_eq!(from_root, ImportResolution::Local);
+        assert_eq!(root_files, vec![PathBuf::from("src/math.rs")]);
+        let (nested, nested_files) = resolve_import(
+            Path::new("."), Path::new("src/math.rs"),
+            SourceLanguage::Rust, "util", &files, &[],
+        );
+        assert_eq!(nested, ImportResolution::Local);
+        assert_eq!(nested_files, vec![PathBuf::from("src/math/util.rs")]);
+    }
 }
