@@ -106,6 +106,7 @@ pub(crate) fn discover_external_crates(
         .arg("crates-io")
         .arg("--")
         .arg(query)
+        .env("CARGO_TERM_COLOR", "never")
         .env("CARGO_NET_RETRY", "0")
         .env("CARGO_HTTP_TIMEOUT", "15")
         .output()?;
