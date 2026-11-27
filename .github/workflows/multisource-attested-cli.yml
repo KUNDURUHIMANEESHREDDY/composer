@@ -103,6 +103,13 @@ jobs:
       contents: read
       attestations: read
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Reject invalid attestation identities before using release artifacts
+        shell: pwsh
+        run: ./tests/test_windows_artifact_attestation_policy.ps1
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # pinned upstream
         with:
           name: composer-windows-x64-portable
@@ -114,8 +121,14 @@ jobs:
         run: |
           $zip = Join-Path $PWD "input/composer-windows-x64.zip"
           if (-not (Test-Path $zip)) { throw "Missing ZIP" }
-          gh attestation verify $zip --repo $env:GITHUB_REPOSITORY
-          if ($LASTEXITCODE -ne 0) { throw "GitHub attestation failed" }
+          & ./scripts/verify-github-build-attestation.ps1 `
+            -ArtifactPath $zip `
+            -WorkflowFile 'multisource-attested-cli.yml' `
+            -Repository $env:GITHUB_REPOSITORY `
+            -Commit $env:GITHUB_SHA `
+            -SourceRef $env:GITHUB_REF `
+            -RunId $env:GITHUB_RUN_ID `
+            -RunAttempt $env:GITHUB_RUN_ATTEMPT
           Expand-Archive -Path $zip -DestinationPath extracted
           $folder = Join-Path $PWD "extracted/composer-windows-x64"
           $exe = Join-Path $folder "composer.exe"
