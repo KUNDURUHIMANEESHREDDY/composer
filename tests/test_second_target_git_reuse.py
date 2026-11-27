@@ -42,6 +42,14 @@ def prefetch_cargo_source(target: Path, root: Path):
         f'git = "{UPSTREAM_URL}", rev = "{UPSTREAM_SHA}" }}\n'
     )
     manifest.write_text(data)
+    # This historical target pins libc=0.2.76, incompatible with the
+    # upstream's newer rand/getrandom requirements. Cargo resolves a fresh
+    # compatible graph ONLY in this disposable prefetch copy, never in the
+    # reviewed original checkout. The resulting exact lock is preserved in
+    # the independent Docker verifier.
+    stale_lock = prefetch / "Cargo.lock"
+    if stale_lock.exists():
+        stale_lock.unlink()
     run("cargo", "fetch", "--manifest-path", str(manifest),
         "--target", "x86_64-unknown-linux-gnu", timeout=180)
     assert (prefetch / "Cargo.lock").is_file(), "Cargo did not produce prefetch lock"
