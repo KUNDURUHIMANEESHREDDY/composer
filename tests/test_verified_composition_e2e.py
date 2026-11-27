@@ -109,7 +109,14 @@ mod tests { #[test] fn works() { assert_eq!(super::baseline(), 7); } }
         assert all(x["individual_evidence"]["image_id"].startswith("sha256:")
                    for x in evidence["steps"])
         assert "serde_json = 1" in evidence["steps"][1]["dependencies_added"]
-        print("PASS multi-repo composition: 2 capsules, 3 Rust tests, unchanged target")
+        provenance = json.loads((verified / "composer-source-attributions.json").read_text())
+        assert {entry["capability_id"] for entry in provenance} == {"double-math", "json-render"}
+        for entry in provenance:
+            assert entry["license_review_asserted_by_caller"] is True
+            assert entry["automated_legal_clearance"] is False
+            assert len(entry["license_documents"]) == 1
+            assert (verified / entry["license_documents"][0]["published_path"]).is_file()
+        print("PASS multi-repo composition: 2 capsules, retained licenses, unchanged target")
 
         # Second source deliberately violates its own included test.
         bad = root / "source-b-bad"

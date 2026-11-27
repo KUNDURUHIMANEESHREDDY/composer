@@ -81,11 +81,15 @@ fn wire_rust_module_internal(
     // Verified-only wiring can tolerate heuristic name collisions because
     // the new source resides in a distinct Rust module and must pass actual
     // compilation/tests before publishing. The unverified path remains strict.
-    if plan.dependencies.iter().any(|d| {
-        d.status != RequirementStatus::AlreadyPresent
-            && !(defer_calls_to_compiler && d.status == RequirementStatus::DifferentConstraint)
-    }) || (!defer_calls_to_compiler
-        && (plan.level != CompatibilityLevel::Compatible || !plan.symbol_collisions.is_empty()))
+    // Verified mode can defer dependency inventory findings to Cargo's
+    // offline compiler/lockfile checks. Unverified mode retains strict gates.
+    if (!defer_calls_to_compiler
+        && plan
+            .dependencies
+            .iter()
+            .any(|d| d.status != RequirementStatus::AlreadyPresent))
+        || (!defer_calls_to_compiler
+            && (plan.level != CompatibilityLevel::Compatible || !plan.symbol_collisions.is_empty()))
         || matches!(
             plan.level,
             CompatibilityLevel::Incompatible | CompatibilityLevel::RequiresAdapter
@@ -102,7 +106,17 @@ fn wire_rust_module_internal(
             "only Rust-to-Rust module wiring is supported".into(),
         ));
     }
-    if !verified.manifest.external_or_unresolved_imports.is_empty()
+    // Inline Rust test modules often use "use super::*", which the
+    // heuristic import resolver cannot prove. Only the isolated
+    // compiler-verified mode may defer these local imports to rustc.
+    if verified
+        .manifest
+        .external_or_unresolved_imports
+        .iter()
+        .any(|import| {
+            !defer_calls_to_compiler
+                || !(import.contains("-> super::") || import.contains("-> self::"))
+        })
         || (!defer_calls_to_compiler && !verified.manifest.unfollowed_symbol_references.is_empty())
     {
         return Err(RustWiringError::Unsupported(
