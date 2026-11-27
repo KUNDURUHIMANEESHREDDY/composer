@@ -268,6 +268,7 @@ pub fn recover_upstream_crate(
                 public_symbol: candidate.public_symbol.clone(),
                 target_alias: options.target_alias.clone(),
                 dependency_alias: alias.clone(),
+                target_signature: None,
                 contract_test: options.contract_test.clone(),
                 registry_cache: options.registry_cache.clone(),
                 upstream_repository: candidate.upstream_repository.clone(),

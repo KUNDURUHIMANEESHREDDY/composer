@@ -1,3 +1,6 @@
+mod auto_external;
+mod external_discovery;
+
 use std::{error::Error, fs, net::SocketAddr, path::PathBuf};
 
 use clap::{Parser, Subcommand};
@@ -105,6 +108,47 @@ enum Command {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Discover externally maintained crates through Cargo's existing registry search.
+    /// Read-only suggestions; never treated as reviewed or verified integrations.
+    DiscoverExternalCrates {
+        /// Keywords describing the desired capability (quote multiword queries).
+        capability: String,
+        /// Maximum number of external crate candidates to return (1-20).
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+    },
+    /// Automatically choose a uniquely reviewed external package and verify its integration.
+    /// Unknown or ambiguous capabilities are refused rather than reimplemented.
+    ComposeExternalRust {
+        /// Approved capability name, e.g. "jaro string similarity".
+        capability: String,
+        /// JSON catalog of independently reviewed third-party source records.
+        #[arg(long)]
+        catalog: PathBuf,
+        /// Original standalone Cargo target, never modified.
+        target: PathBuf,
+        /// New output directory created only after isolated tests pass.
+        #[arg(long)]
+        output: PathBuf,
+        /// Target-visible name for the existing upstream public function.
+        #[arg(long)]
+        target_alias: String,
+        /// Reviewed target API, e.g. transliterate(String)->String.
+        #[arg(long)]
+        target_signature: Option<String>,
+        /// Existing independent target-owned behavior tests.
+        #[arg(long)]
+        contract_test: PathBuf,
+        /// Pre-provisioned read-only Cargo registry for offline execution.
+        #[arg(long)]
+        registry_cache: PathBuf,
+        /// Exclude upstream repositories owned by this user/organization.
+        #[arg(long = "exclude-owner")]
+        excluded_owners: Vec<String>,
+        /// Assert independent source and license review; not legal clearance.
+        #[arg(long)]
+        license_reviewed: bool,
+    },
     /// Stage a verified Feature Capsule into a new target-local namespace.
     Integrate {
         /// Path to a Feature Capsule directory.
@@ -173,6 +217,9 @@ enum Command {
         /// Target-visible API name referenced by the contract test.
         #[arg(long)]
         target_alias: String,
+        /// Reviewed target-owned API, e.g. ported(String)->String; only bounded String borrowing.
+        #[arg(long)]
+        target_signature: Option<String>,
         /// Existing independent target-owned tests/<name>.rs contract.
         #[arg(long)]
         contract_test: PathBuf,
@@ -417,6 +464,37 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 println!("{}", serde_json::to_string_pretty(&plan)?);
             }
         }
+        Command::DiscoverExternalCrates { capability, limit } => {
+            let report = external_discovery::discover_external_crates(&capability, limit)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::ComposeExternalRust {
+            capability,
+            catalog,
+            target,
+            output,
+            target_alias,
+            target_signature,
+            contract_test,
+            registry_cache,
+            excluded_owners,
+            license_reviewed,
+        } => {
+            let result =
+                auto_external::compose_approved_external(&auto_external::AutoExternalOptions {
+                    capability,
+                    catalog,
+                    target,
+                    output,
+                    target_alias,
+                    target_signature,
+                    contract_test,
+                    registry_cache,
+                    excluded_owners,
+                    license_reviewed,
+                })?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
         Command::Integrate {
             capsule,
             target,
@@ -490,6 +568,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             version,
             public_symbol,
             target_alias,
+            target_signature,
             contract_test,
             registry_cache,
             upstream_repository,
@@ -504,6 +583,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 public_symbol,
                 target_alias,
                 dependency_alias: None,
+                target_signature,
                 contract_test,
                 registry_cache,
                 upstream_repository,

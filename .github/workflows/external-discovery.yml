@@ -1,21 +1,15 @@
 name: External Cargo-backed discovery and reuse
 
 on:
+  workflow_dispatch:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - .github/workflows/external-discovery.yml
       - tests/test_external_discovery_public.py
       - crates/integration/**
       - apps/cli/**
-  push:
-    branches:
-      - feat/cargo-upstream-discovery
-    paths:
-      - .github/workflows/external-discovery.yml
-      - tests/test_external_discovery_public.py
-      - crates/integration/**
-      - apps/cli/**
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,3 +27,34 @@ jobs:
         run: bash scripts/prefetch-pinned-rust-verifier.sh
       - name: Discover external repos and verify real functionality in unrelated public target
         run: python3 -u tests/test_external_discovery_public.py
+  cargo-discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
+      - name: Compile and test discovery without network
+        run: cargo test -p composer-cli --bin composer --locked
+      - name: Discover a real third-party crate from crates.io
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo run --locked --quiet -p composer-cli -- discover-external-crates luhn --limit 10 > external-candidates.json
+          python3 - <<'PY'
+          import json
+          with open("external-candidates.json", encoding="utf-8") as file:
+              report = json.load(file)
+          assert report["selection_status"] == "read_only_candidates_not_verified"
+          assert report["candidates"], "Cargo registry search found no external candidates"
+          for item in report["candidates"]:
+              assert item["status"] == "requires_source_license_and_behavior_review"
+              assert item["published_version_unverified"]
+          print("PASS external read-only Cargo registry lookup:", len(report["candidates"]), "candidates")
+          PY
+      - name: Preserve real registry response or diagnostic log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: read-only-external-candidates
+          path: external-candidates.json
+          if-no-files-found: warn
