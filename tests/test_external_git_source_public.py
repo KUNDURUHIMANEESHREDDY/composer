@@ -151,7 +151,7 @@ def negatives(target_source: Path, upstream: Path, root: Path) -> None:
     response, out = execute(target, root, upstream, "no-review",
                             license_flag=False, require_success=False)
     assert response.returncode != 0
-    assert "source/license review" in response.stderr, response.stderr[-1500:]
+    assert "ReviewRequired" in response.stderr, response.stderr[-1500:]
     assert not out.exists()
     assert_unchanged(target, snapshot)
     print("PASS Git source without explicit license review rejected", flush=True)
