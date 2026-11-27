@@ -78,7 +78,14 @@ pub fn discover_rust_api_contracts(
 ) -> Result<RustApiDiscoveryReport, RustApiDiscoveryError> {
     let verified = verify_capsule(capsule_root)?;
     let target_root = target_root.canonicalize()?;
-    let lib = target_root.join("src/lib.rs");
+    let src_directory = target_root.join("src");
+    let directory_meta = fs::symlink_metadata(&src_directory)?;
+    if !directory_meta.is_dir() || directory_meta.file_type().is_symlink() {
+        return Err(RustApiDiscoveryError::Unsupported(
+            "target src/ must be a regular, non-symlink directory".into(),
+        ));
+    }
+    let lib = src_directory.join("lib.rs");
     let meta = fs::symlink_metadata(&lib)?;
     if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > MAX_TARGET_BYTES {
         return Err(RustApiDiscoveryError::Unsupported(
@@ -89,8 +96,12 @@ pub fn discover_rust_api_contracts(
     let mut requirements = scan_public_functions(&lib_text, Path::new("src/lib.rs"), "")
         .into_iter()
         .filter(|func| func.body_is_unimplemented)
-        .take(MAX_INPUT_FUNCTIONS)
         .collect::<Vec<_>>();
+    if requirements.len() > MAX_INPUT_FUNCTIONS {
+        return Err(RustApiDiscoveryError::Unsupported(
+            "target has more than 256 unfinished public Rust API requirements".into(),
+        ));
+    }
 
     let sources = verified
         .manifest
