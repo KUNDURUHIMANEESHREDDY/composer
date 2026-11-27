@@ -41,6 +41,14 @@ fn independently_verify_levenshtein_not_optimal_string_alignment() {
 }
 """
 
+AMBIGUOUS_CONTRACT = """use trigram::ported_levenshtein;
+#[test]
+fn same_signature_insufficient_contract_must_not_choose_automatically() {
+    assert_eq!(ported_levenshtein("".to_owned(), "".to_owned()), 0);
+    assert_eq!(ported_levenshtein("same".to_owned(), "same".to_owned()), 0);
+}
+"""
+
 def cli(*args: str, require_success=True):
     return existing.cli(*args, require_success=require_success)
 
@@ -52,7 +60,7 @@ def fixture(target: Path, root: Path, label: str, conflict=False, contract=GOOD)
 
 def verify(target: Path, output: Path, upstream: Path, symbol="jaro",
            sha=SOURCE_SHA, require_success=True, infer=True,
-           alias="ported_jaro", typed_alias=False):
+           alias="ported_jaro", typed_alias=False, alternatives=()):
     args = [
         "verify-external-git-rust", str(target),
         "--output", str(output),
@@ -69,6 +77,8 @@ def verify(target: Path, output: Path, upstream: Path, symbol="jaro",
     ]
     if infer:
         args.append("--infer-typed-signature" if typed_alias else "--infer-owned-string-signature")
+    for candidate in alternatives:
+        args += ["--alternative-public-symbol", candidate]
     return cli(*args, require_success=require_success)
 
 def main():
@@ -178,6 +188,73 @@ def main():
         existing.assert_unchanged(wrong_target, baseline)
         print("PASS type-identical but semantically wrong distance algorithm rejected", flush=True)
 
+        # Unlike type-only inference, select among two reviewed candidates
+        # by actually running the target's pre-authored behavioral contract.
+        # First candidate has the same Rust signature but is semantically wrong.
+        for n in range(1, 4):
+            work, before = fixture(
+                target, root, f"candidate-unique-{n}", contract=LEVENSHTEIN_CONTRACT
+            )
+            out = root / f"unique-contract-selected-{n}"
+            data = json.loads(
+                verify(
+                    work, out, source, symbol="osa_distance",
+                    alternatives=("levenshtein",), alias="ported_levenshtein",
+                    typed_alias=True,
+                ).stdout
+            )
+            assert data["public_symbol"] == "levenshtein"
+            assert data["offline_tests_passed"] is True
+            assert data["lockfile_git_commit_verified"] is True
+            assert data["source_checkout_commit_verified"] is True
+            evidence = json.loads((out / "composer-upstream-git-evidence.json").read_text())
+            assert evidence["contract_based_candidate_selection"] is True
+            assert evidence["reviewed_candidate_count"] == 2
+            assert evidence["candidate_attempts"] == [
+                {"symbol": "osa_distance", "verified": False},
+                {"symbol": "levenshtein", "verified": True},
+            ]
+            assert evidence["semantic_equivalence_proven"] is False
+            assert evidence["network_disabled"] is True
+            assert not any(out.parent.glob(".composer-candidate-selection-*"))
+            existing.assert_unchanged(work, before)
+            print(f"PASS automatic unique contract-verified source selection {n}/3", flush=True)
+
+        # A too-weak contract passes both Levenshtein and OSA. This is
+        # ambiguous evidence, so refuse publication rather than guessing.
+        weak, baseline = fixture(
+            target, root, "ambiguous-behavior", contract=AMBIGUOUS_CONTRACT
+        )
+        ambiguous_output = root / "must-not-publish-ambiguous-source"
+        ambiguous = verify(
+            weak, ambiguous_output, source, symbol="levenshtein",
+            alternatives=("osa_distance",), alias="ported_levenshtein",
+            typed_alias=True, require_success=False,
+        )
+        assert ambiguous.returncode != 0
+        assert "not unique: 2 out of 2" in ambiguous.stderr, ambiguous.stderr[-2200:]
+        assert not ambiguous_output.exists()
+        assert not any(root.glob(".composer-candidate-selection-*"))
+        existing.assert_unchanged(weak, baseline)
+        print("PASS ambiguous weak contract refuses automatic publication", flush=True)
+
+        # A genuinely wrong pair must never masquerade as one success.
+        missing, baseline = fixture(
+            target, root, "no-behavioral-match", contract=LEVENSHTEIN_CONTRACT
+        )
+        no_match_output = root / "must-not-publish-no-matching-source"
+        none_match = verify(
+            missing, no_match_output, source, symbol="osa_distance",
+            alternatives=("damerau_levenshtein",),
+            alias="ported_levenshtein", typed_alias=True, require_success=False,
+        )
+        assert none_match.returncode != 0
+        assert "not unique: 0 out of 2" in none_match.stderr, none_match.stderr[-2200:]
+        assert not no_match_output.exists()
+        assert not any(root.glob(".composer-candidate-selection-*"))
+        existing.assert_unchanged(missing, baseline)
+        print("PASS zero behavioral matches refuse automatic publication", flush=True)
+
         print("EVIDENCE_JSON " + json.dumps({
             "source": [SOURCE_REPO, SOURCE_SHA],
             "target": [TARGET_REPO, TARGET_SHA],
@@ -185,6 +262,9 @@ def main():
             "numeric_return_type_inferred_from_pinned_upstream_AST": True,
             "usize_levenshtein_accepted_3_times": True,
             "same_signature_wrong_distance_algorithm_rejected": True,
+            "contract_based_reviewed_symbol_selection_passed_3_times": True,
+            "ambiguous_weak_contract_rejected": True,
+            "zero_match_rejected": True,
             "verified_runs": recorded,
             "wrong_semantics_rejected": True,
             "generic_source_rejected": True,
