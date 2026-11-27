@@ -220,6 +220,7 @@ pub(crate) fn compose_approved_external(
         .arg(format!("{}@{}", selected.package, selected.version))
         .arg("--registry")
         .arg("crates-io")
+        .env("CARGO_TERM_COLOR", "never")
         .env("CARGO_NET_RETRY", "0")
         .env("CARGO_HTTP_TIMEOUT", "15")
         .output()?;
