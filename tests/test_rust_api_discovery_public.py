@@ -99,6 +99,33 @@ def main() -> None:
         assert incompatible["best_suggestion"] is None, incompatible
         print("PASS repo B->A: signed widening suggestion; narrowing rejected", flush=True)
 
+        # The read-only scanner must not follow src/ symlinks outside the
+        # chosen target, or silently truncate >256 unfinished requirements.
+        symlinked = root / "target-symlink"
+        symlinked.mkdir()
+        (symlinked / "src").symlink_to(target_b / "src", target_is_directory=True)
+        rejected = cli(
+            "suggest-rust-api", str(totient), str(symlinked),
+            require_success=False,
+        )
+        assert rejected.returncode != 0
+        assert "non-symlink" in rejected.stderr
+        many_stubs = target_with_stubs(
+            ebtech, root / "target-too-many",
+            "".join(
+                f"pub fn unknown_{i}(x: u32) -> u64 {{ todo!() }}\n"
+                for i in range(257)
+            ),
+        )
+        rejected = cli(
+            "suggest-rust-api", str(totient), str(many_stubs),
+            require_success=False,
+        )
+        assert rejected.returncode != 0
+        assert "more than 256 unfinished" in rejected.stderr
+        print("PASS read-only safety gates: src symlink and incomplete >256 "
+              "target scan rejected", flush=True)
+
         # Third unfamiliar repository has a no_std type-oriented library API,
         # not a scalar top-level function suitable for this bounded adapter.
         hash_capsule = make_capsule(
