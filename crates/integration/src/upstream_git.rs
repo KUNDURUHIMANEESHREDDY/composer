@@ -28,34 +28,24 @@ const GIT_EVIDENCE: &str = "composer-upstream-git-evidence.json";
 const RUSTLS_PUBLIC_FIXTURE_COMMIT: &str = "bd95fd9bdfe9d6e42b62d38e9e6ef38ac0f10608";
 const RUSTLS_PUBLIC_FIXTURE_TREE: &str = "b42c258742023dde0c447979ee72349f92c2006c";
 
-/// Allow only the already-public test CA fixtures of the exact frozen Rustls
-/// repository. These keys are public upstream test fixtures, not credentials.
-/// No new untracked or modified data can be copied from a user's machine.
+/// Allow only the already-public certificate and binary test fixtures of the
+/// exact frozen Rustls checkout. No untracked or modified user data is copied.
 fn copy_pinned_rustls_test_fixtures(
     original: &Path,
     staged: &Path,
 ) -> Result<&'static str, VerifiedRustError> {
-    let git = |args: &[&str]| -> Result<std::process::Output, VerifiedRustError> {
-        let result = Command::new("git")
-            .arg("-C")
-            .arg(original)
-            .args(args)
-            .output()?;
-        if !result.status.success() {
-            return Err(VerifiedRustError::Unsafe(
-                "pinned Rustls test fixtures failed Git verification".into(),
-            ));
-        }
-        Ok(result)
-    };
+    // Reuse the existing hardened Git reader; do not invoke host-side
+    // fsmonitor/filter helpers from untrusted checkout-local Git configuration.
+    reject_host_git_filter_commands(original)?;
+    let git = |args: &[&str]| git_read(original, args);
     let head = git(&["rev-parse", "HEAD"])?;
-    if String::from_utf8_lossy(&head.stdout).trim() != RUSTLS_PUBLIC_FIXTURE_COMMIT {
+    if head != RUSTLS_PUBLIC_FIXTURE_COMMIT {
         return Err(VerifiedRustError::Unsafe(
             "Rustls fixture import requires its exact frozen Git commit".into(),
         ));
     }
     let tree = git(&["rev-parse", "HEAD:test-ca"])?;
-    if String::from_utf8_lossy(&tree.stdout).trim() != RUSTLS_PUBLIC_FIXTURE_TREE {
+    if tree.as_str() != RUSTLS_PUBLIC_FIXTURE_TREE {
         return Err(VerifiedRustError::Unsafe(
             "Rustls test CA tree differs from reviewed public Git objects".into(),
         ));
@@ -69,7 +59,7 @@ fn copy_pinned_rustls_test_fixtures(
         "rustls/src/testdata",
         "rustls/tests/data",
     ])?;
-    if !changed.stdout.is_empty() {
+    if !changed.is_empty() {
         return Err(VerifiedRustError::Unsafe(
             "modified or untracked pinned Rustls test fixtures are not allowed".into(),
         ));
@@ -86,7 +76,7 @@ fn copy_pinned_rustls_test_fixtures(
     let mut count = 0_usize;
     let mut total = 0_u64;
     for entry in entries
-        .stdout
+        .as_bytes()
         .split(|&byte| byte == 0)
         .filter(|entry| !entry.is_empty())
     {
@@ -160,7 +150,7 @@ fn copy_pinned_rustls_test_fixtures(
     ] {
         let tree_ref = format!("HEAD:{directory}");
         let actual_tree = git(&["rev-parse", &tree_ref])?;
-        if String::from_utf8_lossy(&actual_tree.stdout).trim() != expected_tree {
+        if actual_tree.as_str() != expected_tree {
             return Err(VerifiedRustError::Unsafe(
                 "Rustls binary fixture tree differs from reviewed public Git objects".into(),
             ));
@@ -177,7 +167,7 @@ fn copy_pinned_rustls_test_fixtures(
         let mut fixture_count = 0_usize;
         let mut fixture_bytes = 0_u64;
         for entry in entries
-            .stdout
+            .as_bytes()
             .split(|&byte| byte == 0)
             .filter(|entry| !entry.is_empty())
         {
