@@ -30,6 +30,10 @@ CONTRACT = "tests/composer_heldout30_totient_contract.rs"
 INDEPENDENT_ORACLE = """use anyhow::ported_totient;
 #[test]
 fn totient_behavior_is_not_merely_type_compatible() {
+    // The contract-admission validator correctly refuses assertions that
+    // exist only inside a loop (which could execute zero times). Require
+    // an unconditional, independently checked invocation as well.
+    assert_eq!(ported_totient(36), 12);
     for (n, expected) in [(1, 1), (2, 1), (3, 2), (9, 6),
                           (10, 4), (13, 12), (36, 12), (100, 40)] {
         assert_eq!(ported_totient(n), expected, "totient({n})");

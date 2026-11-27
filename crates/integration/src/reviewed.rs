@@ -83,15 +83,15 @@ pub(crate) fn validate_contract_test(
     // accept a test file that the verification command may never execute.
     let cargo: toml::Value = toml::from_str(&fs::read_to_string(target.join("Cargo.toml"))?)
         .map_err(|err| VerifiedRustError::Toml(err.to_string()))?;
-    if cargo
+    let autotests_disabled = cargo
         .get("package")
         .and_then(|package| package.get("autotests"))
         .and_then(toml::Value::as_bool)
-        == Some(false)
-    {
-        // Cargo will run explicitly declared [[test]] targets even when
-        // automatic test discovery is off. Demand an exact registration;
-        // never accept merely dropping a .rs file in tests/.
+        == Some(false);
+    if autotests_disabled {
+        // When automatic discovery is disabled, Cargo runs only an explicitly
+        // named test target. Require this precise file, the normal harness,
+        // no required feature gates, and test execution enabled.
         let contract_name = test.file_stem().and_then(|s| s.to_str());
         let contract_path = test.to_str().map(|s| s.replace('\\', "/"));
         let declared = cargo
@@ -103,22 +103,34 @@ pub(crate) fn validate_contract_test(
                         && entry.get("path").and_then(toml::Value::as_str)
                             == contract_path.as_deref()
                         && entry.get("harness").and_then(toml::Value::as_bool) != Some(false)
+                        && entry.get("test").and_then(toml::Value::as_bool) != Some(false)
+                        && entry.get("required-features").is_none()
                 })
             });
         if !declared {
             return Err(VerifiedRustError::Unsafe(
-                "autotests=false requires an exact explicit [[test]] registration for the contract"
-                    .into(),
+                "autotests=false requires an exact, runnable explicit [[test]] registration".into(),
             ));
         }
-    }
-    // Explicit [[test]] targets can disable the harness, point to a different
-    // file or be skipped by required-features. Fail closed rather than merely
-    // compiling a test file that Cargo never runs.
-    if cargo.get("test").is_some() {
-        return Err(VerifiedRustError::Unsafe(
-            "explicit Cargo [[test]] configuration requires independent test-runner review".into(),
-        ));
+    } else if let Some(configured) = cargo.get("test") {
+        // With automatic test discovery enabled, existing unrelated [[test]]
+        // entries (often feature-gated upstream integration tests) do not
+        // replace our independently named tests/<contract>.rs. Reject any
+        // collision by either name or path; otherwise preserve the target's
+        // existing test configuration and require Docker cargo test success.
+        let entries = configured.as_array().ok_or_else(|| {
+            VerifiedRustError::Unsafe("Cargo [[test]] declarations are malformed".into())
+        })?;
+        let contract_name = test.file_stem().and_then(|s| s.to_str());
+        let contract_path = test.to_str().map(|s| s.replace('\\', "/"));
+        if entries.iter().any(|entry| {
+            entry.get("name").and_then(toml::Value::as_str) == contract_name
+                || entry.get("path").and_then(toml::Value::as_str) == contract_path.as_deref()
+        }) {
+            return Err(VerifiedRustError::Unsafe(
+                "an explicit Cargo [[test]] target collides with the independent contract".into(),
+            ));
+        }
     }
     let test_dir = target.join("tests");
     let dir = fs::symlink_metadata(&test_dir)?;
@@ -411,6 +423,44 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
+    fn heldout30_shared_behavioral_contract_passes_admission_without_weakening_policy() {
+        // Exercise the actual Python-generated fixture used for all 30 CI targets.
+        // Its unconditional assertion must pass the strict parser, while the
+        // earlier loop-only assertion remains disallowed.
+        let harness = include_str!("../../../tests/test_heldout30_functional_anyhow.py");
+        let oracle = harness
+            .split("INDEPENDENT_ORACLE = \"\"\"")
+            .nth(1)
+            .and_then(|text| text.split("\"\"\"").next())
+            .expect("heldout30 Python fixture must contain the shared oracle");
+        let root =
+            std::env::temp_dir().join(format!("composer-heldout30-admission-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("tests")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='heldout-contract-check'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        let contract = root.join("tests/heldout.rs");
+        fs::write(&contract, oracle).unwrap();
+        assert!(
+            validate_contract_test(&root, Path::new("tests/heldout.rs"), "ported_totient").is_ok(),
+            "shared held-out functional contract must pass strict AST admission"
+        );
+        let previous = oracle.replacen("    assert_eq!(ported_totient(36), 12);\n", "", 1);
+        assert_ne!(
+            previous, oracle,
+            "unconditional edge-case assertion disappeared"
+        );
+        fs::write(&contract, previous).unwrap();
+        assert!(
+            validate_contract_test(&root, Path::new("tests/heldout.rs"), "ported_totient").is_err(),
+            "loop-only assertions must still be rejected"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn substitutes_only_exact_stub_body() {
         let root = std::env::temp_dir().join(format!("composer-review-{}", Uuid::new_v4()));
         fs::create_dir_all(root.join("src")).unwrap();
@@ -511,11 +561,47 @@ mod tests {
             "[package]\nname='demo'\nversion='0.1.0'\nautotests=false\n[[test]]\nname='contract'\npath='tests/contract.rs'\n",
         ).unwrap();
         assert!(validate_contract_test(&root, Path::new("tests/contract.rs"), "wanted").is_ok());
+        // Exact registration is allowed only when Cargo's discovery is off
+        // and none of the registration flags can skip the independent contract.
+        for blocked in [
+            "harness=false\n",
+            "test=false\n",
+            "required-features=['disabled']\n",
+        ] {
+            fs::write(
+                root.join("Cargo.toml"),
+                format!(
+                    "[package]\nname='demo'\nversion='0.1.0'\nautotests=false\n[[test]]\nname='contract'\npath='tests/contract.rs'\n{blocked}"
+                ),
+            )
+            .unwrap();
+            assert!(
+                validate_contract_test(&root, Path::new("tests/contract.rs"), "wanted").is_err(),
+                "non-executable explicit test was admitted: {blocked}"
+            );
+        }
         fs::write(root.join("Cargo.toml"), original_manifest.clone()).unwrap();
+        // Existing upstream [[test]] entries must not mask the new
+        // automatically discovered contract, but unrelated tests are safe.
+        for unrelated in [
+            "[[test]]\nname='upstream'\npath='tests/upstream.rs'\n",
+            "[[test]]\nname='upstream'\npath='tests/upstream.rs'\nrequired-features=['full']\n",
+        ] {
+            fs::write(
+                root.join("Cargo.toml"),
+                format!("{original_manifest}{unrelated}"),
+            )
+            .unwrap();
+            assert!(
+                validate_contract_test(&root, Path::new("tests/contract.rs"), "wanted").is_ok(),
+                "unrelated upstream test must not block independent contract: {unrelated}"
+            );
+        }
         for explicit in [
             "[[test]]\nname='contract'\npath='tests/contract.rs'\nharness=false\n",
             "[[test]]\nname='contract'\npath='tests/contract.rs'\nrequired-features=['optional']\n",
-            "[[test]]\nname='unrelated'\npath='tests/unrelated.rs'\n",
+            "[[test]]\nname='contract'\npath='tests/other.rs'\n",
+            "[[test]]\nname='unrelated'\npath='tests/contract.rs'\n",
         ] {
             fs::write(
                 root.join("Cargo.toml"),
