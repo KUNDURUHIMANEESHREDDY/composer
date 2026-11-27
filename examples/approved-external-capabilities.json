@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "description": "Reviewed external-only capability sources. Exact aliases prevent metadata-based guesses; require independent source/license review and behavioral tests before import.",
+  "approved_sources": [
+    {
+      "package": "strsim",
+      "version": "0.11.1",
+      "public_symbol": "jaro",
+      "repository": "https://github.com/rapidfuzz/strsim-rs",
+      "commit": "dacc84c0dc61eff0ee0ff66962bcf2e17018ad26",
+      "license": "MIT",
+      "capabilities": [
+        "jaro",
+        "jaro similarity",
+        "jaro string similarity"
+      ]
+    },
+    {
+      "package": "luhn",
+      "version": "1.0.2",
+      "public_symbol": "valid",
+      "repository": "https://github.com/jeffcarp/luhn-rs",
+      "commit": "dbe3684f2f4b36bccfb3699f26fab9eaf17335fc",
+      "license": "MIT",
+      "capabilities": [
+        "luhn",
+        "luhn validation",
+        "luhn checksum validation"
+      ]
+    }
+  ]
+}
