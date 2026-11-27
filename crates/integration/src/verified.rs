@@ -465,18 +465,30 @@ fn selected_source_direct_dependencies(
         .iter()
         .filter(|item| item.file_kind == "source")
         .collect::<Vec<_>>();
-    if sources.len() != 1 {
+    if sources.is_empty() || sources.len() > 32 {
         return Err(VerifiedRustError::Dependency(
-            "selective dependency inventory requires exactly one source file".into(),
+            "selective dependency inventory supports 1-32 source files".into(),
         ));
     }
-    let source_file = capsule_root.join(&sources[0].capsule_path);
-    if fs::symlink_metadata(&source_file)?.len() > 1024 * 1024 {
-        return Err(VerifiedRustError::Dependency(
-            "source module is too large for conservative dependency selection".into(),
-        ));
+    let mut source = String::new();
+    let mut combined_bytes = 0u64;
+    for entry in sources {
+        let file = capsule_root.join(&entry.capsule_path);
+        let metadata = fs::symlink_metadata(&file)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(VerifiedRustError::Unsafe(format!(
+                "source artifact is non-regular: {}", file.display()
+            )));
+        }
+        combined_bytes = combined_bytes.saturating_add(metadata.len());
+        if combined_bytes > 4 * 1024 * 1024 {
+            return Err(VerifiedRustError::Dependency(
+                "selected module sources exceed 4 MiB total".into()
+            ));
+        }
+        source.push_str(&fs::read_to_string(file)?);
+        source.push('\n');
     }
-    let source = fs::read_to_string(source_file)?;
     let mut chosen = std::collections::BTreeMap::new();
     let Some(table) = cargo.get("dependencies") else {
         return Ok(chosen);
