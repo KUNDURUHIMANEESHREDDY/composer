@@ -118,11 +118,30 @@ fn locked_registry_checksum(
             "pinned crates.io dependency {package} {version} not uniquely resolved in Cargo.lock"
         )));
     }
+    // Older Cargo.lock V1 files place checksums in [metadata], whereas
+    // newer Cargo records put them alongside each [[package]] entry.
+    let legacy_key = format!(
+        "checksum {package} {version} (registry+https://github.com/rust-lang/crates.io-index)"
+    );
     let checksum = matched[0]
         .get("checksum")
         .and_then(toml::Value::as_str)
+        .or_else(|| {
+            lock.get("metadata")
+                .and_then(toml::Value::as_table)
+                .and_then(|table| table.get(&legacy_key))
+                .and_then(toml::Value::as_str)
+        })
         .ok_or_else(|| {
-            VerifiedRustError::Dependency("registry package lock checksum is missing".into())
+            VerifiedRustError::Dependency(format!(
+                "registry package lock checksum is missing (lock_version={}, package_keys={:?})",
+                lock.get("version")
+                    .and_then(toml::Value::as_integer)
+                    .unwrap_or(1),
+                matched[0]
+                    .as_table()
+                    .map(|table| table.keys().collect::<Vec<_>>())
+            ))
         })?;
     if checksum.len() != 64 || !checksum.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(VerifiedRustError::Dependency(
