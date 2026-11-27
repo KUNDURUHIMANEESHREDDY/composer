@@ -8,6 +8,7 @@ mod batch;
 mod compatibility;
 mod dependencies;
 mod multifile;
+mod reviewed;
 mod verified;
 mod verify;
 mod wire;

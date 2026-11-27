@@ -121,6 +121,8 @@ pub fn compose_verified_rust_batch(
                 registry_cache: options.registry_cache.clone(),
                 api_aliases: Vec::new(),
                 api_signatures: Vec::new(),
+                reviewed_api_rule: None,
+                contract_test: None,
             })
             .map_err(|source| BatchRustError::Step {
                 step: index + 1,

@@ -34,6 +34,10 @@ pub struct VerifiedRustOptions {
     pub api_aliases: Vec<String>,
     /// Optional target-facing function contracts with compiler-inferred Into.
     pub api_signatures: Vec<String>,
+    /// Explicit reviewed contract rule, recomputed against current source/target.
+    pub reviewed_api_rule: Option<String>,
+    /// Existing target-owned behavioral test: tests/<name>.rs.
+    pub contract_test: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +49,8 @@ pub struct VerifiedRustResult {
     pub compatible_constraints_retained: Vec<String>,
     pub verified_api_aliases: Vec<String>,
     pub verified_api_signatures: Vec<String>,
+    pub reviewed_api_rule: Option<String>,
+    pub reviewed_contract_test: Option<PathBuf>,
     pub docker_image: String,
     pub offline_lockfile_resolved: bool,
     pub isolated_tests_passed: bool,
@@ -69,6 +75,8 @@ struct BuildEvidence {
     compatible_constraints_retained: Vec<String>,
     verified_api_aliases: Vec<String>,
     verified_api_signatures: Vec<String>,
+    reviewed_api_rule: Option<String>,
+    reviewed_contract_test: Option<PathBuf>,
     repair_actions: Vec<String>,
     tests_passed: bool,
     elapsed_seconds: f64,
@@ -109,8 +117,20 @@ pub fn compose_verified_rust(
     if !options.license_reviewed {
         return Err(VerifiedRustError::ReviewRequired);
     }
+    let reviewed_contract = match (&options.reviewed_api_rule, &options.contract_test) {
+        (None, None) => None,
+        (Some(rule), Some(test)) if options.api_aliases.is_empty() && options.api_signatures.is_empty() => {
+            Some((rule.clone(), test.clone()))
+        }
+        _ => return Err(VerifiedRustError::Unsafe(
+            "reviewed API requires both --reviewed-api-rule and --contract-test, without other API rules".into()
+        )),
+    };
     let capsule = verify_capsule(&options.capsule_root)?;
     let source = options.target_root.canonicalize()?;
+    if let Some((rule, test)) = &reviewed_contract {
+        crate::reviewed::validate_reviewed_api(&capsule.root, &source, rule, test)?;
+    }
     let dest = &options.output_root;
     if dest.exists() {
         return Err(VerifiedRustError::OutputExists(dest.clone()));
@@ -164,6 +184,16 @@ pub fn compose_verified_rust(
             &options.api_signatures,
             &options.api_aliases,
         )?;
+        let reviewed_api_rule = if let Some((rule, _test)) = &reviewed_contract {
+            Some(crate::reviewed::apply_reviewed_api(
+                &staged,
+                &wired.module_name,
+                rule,
+            )?)
+        } else {
+            None
+        };
+        let reviewed_contract_test = reviewed_contract.as_ref().map(|(_rule, test)| test.clone());
         preserve_source_attribution(&capsule.manifest, &capsule.root, &staged)?;
         let image_id = inspect_local_image_id()?;
         let user = nonroot_container_user()?;
@@ -213,6 +243,8 @@ pub fn compose_verified_rust(
             compatible_constraints_retained: compatible_constraints_retained.clone(),
             verified_api_aliases: verified_api_aliases.clone(),
             verified_api_signatures: verified_api_signatures.clone(),
+            reviewed_api_rule: reviewed_api_rule.clone(),
+            reviewed_contract_test: reviewed_contract_test.clone(),
             repair_actions: if logs.contains("COMPOSER_REPAIR: lockfile_regenerated") {
                 vec!["lockfile_regenerated_once_after_missing_or_stale_check".into()]
             } else {
@@ -235,6 +267,8 @@ pub fn compose_verified_rust(
             compatible_constraints_retained,
             verified_api_aliases,
             verified_api_signatures,
+            reviewed_api_rule,
+            reviewed_contract_test,
             docker_image: DEFAULT_IMAGE.into(),
             offline_lockfile_resolved: true,
             isolated_tests_passed: true,
@@ -1342,6 +1376,8 @@ mod tests {
             registry_cache: None,
             api_aliases: Vec::new(),
             api_signatures: Vec::new(),
+            reviewed_api_rule: None,
+            contract_test: None,
         });
         assert!(matches!(result, Err(VerifiedRustError::ReviewRequired)));
     }
