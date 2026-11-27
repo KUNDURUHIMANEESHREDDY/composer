@@ -339,7 +339,12 @@ pub fn verify_upstream_git_candidates(
         }
     }
     let destination = &options.output_root;
-    if destination.exists() || !matches!(destination.components().next_back(), Some(Component::Normal(_))) {
+    if destination.exists()
+        || !matches!(
+            destination.components().next_back(),
+            Some(Component::Normal(_))
+        )
+    {
         return Err(VerifiedRustError::OutputExists(destination.clone()));
     }
     let original = options.target_root.canonicalize()?;
@@ -347,9 +352,9 @@ pub fn verify_upstream_git_candidates(
         .parent()
         .ok_or_else(|| VerifiedRustError::Unsafe("contract selection output has no parent".into()))?
         .canonicalize()?;
-    let output = parent.join(
-        destination.file_name().ok_or_else(|| VerifiedRustError::Unsafe("contract selection output has no name".into()))?,
-    );
+    let output = parent.join(destination.file_name().ok_or_else(|| {
+        VerifiedRustError::Unsafe("contract selection output has no name".into())
+    })?);
     if output.starts_with(&original) || original.starts_with(&output) {
         return Err(VerifiedRustError::Unsafe(
             "contract selection output overlaps original target".into(),
@@ -383,9 +388,11 @@ pub fn verify_upstream_git_candidates(
                 candidates.len()
             )));
         }
-        let mut selected = passed.pop().ok_or_else(|| VerifiedRustError::Unsafe(
-            "contract selection unexpectedly has no verified candidate".into(),
-        ))?;
+        let mut selected = passed.pop().ok_or_else(|| {
+            VerifiedRustError::Unsafe(
+                "contract selection unexpectedly has no verified candidate".into(),
+            )
+        })?;
         let mut evidence: serde_json::Value =
             serde_json::from_slice(&fs::read(&selected.evidence_path)?)?;
         evidence["contract_based_candidate_selection"] = serde_json::json!(true);
@@ -689,7 +696,13 @@ mod tests {
         assert!(matches!(
             verify_upstream_git_candidates(
                 &options,
-                &["one".into(), "two".into(), "three".into(), "four".into(), "five".into()],
+                &[
+                    "one".into(),
+                    "two".into(),
+                    "three".into(),
+                    "four".into(),
+                    "five".into()
+                ],
             ),
             Err(VerifiedRustError::Unsafe(_))
         ));
