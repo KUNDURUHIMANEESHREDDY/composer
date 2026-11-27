@@ -227,6 +227,7 @@ dependencies = [
  "composer-integration",
  "composer-intelligence",
  "composer-repository",
+ "semver",
  "serde_json",
  "tokio",
 ]
