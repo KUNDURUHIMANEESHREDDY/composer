@@ -12,6 +12,7 @@ $evidence = [ordered]@{
     docker_cli_found = $false
     docker_context = $null
     daemon_os_linux = $false
+    docker_desktop_daemon = $false
     runsc_registered = $false
     image_cached = $false
     runsc_smoke_passed = $false
@@ -32,6 +33,12 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "docker_engine_unavailable" }
         $evidence.daemon_os_linux = ($daemon | Out-String).Trim() -eq "linux"
         if (-not $evidence.daemon_os_linux) { throw "docker_is_not_using_linux_containers" }
+
+        # A generic remote Linux Docker daemon is not proof of Docker Desktop.
+        $daemonProduct = & docker info --format '{{.OperatingSystem}}' 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "docker_engine_identity_unavailable" }
+        $evidence.docker_desktop_daemon = ($daemonProduct | Out-String).Trim() -match "Docker Desktop"
+        if (-not $evidence.docker_desktop_daemon) { throw "docker_engine_is_not_docker_desktop" }
 
         $registered = & docker info --format '{{json .Runtimes}}' 2>&1
         if ($LASTEXITCODE -ne 0) { throw "runtime_registry_unavailable" }
@@ -61,6 +68,8 @@ catch {
         "docker_context_unavailable",
         "docker_engine_unavailable",
         "docker_is_not_using_linux_containers",
+        "docker_engine_identity_unavailable",
+        "docker_engine_is_not_docker_desktop",
         "runtime_registry_unavailable",
         "runsc_runtime_not_registered",
         "rust_verifier_image_not_cached_no_auto_download",
