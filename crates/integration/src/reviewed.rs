@@ -78,7 +78,8 @@ fn validate_contract_test(
         == Some(false)
     {
         return Err(VerifiedRustError::Unsafe(
-            "target disables automatic integration tests; contract test not guaranteed to execute".into(),
+            "target disables automatic integration tests; contract test not guaranteed to execute"
+                .into(),
         ));
     }
     let test_dir = target.join("tests");
@@ -276,7 +277,11 @@ mod tests {
     fn refuses_invalid_contract_file_paths_and_ignored_tests() {
         let root = std::env::temp_dir().join(format!("composer-contract-{}", Uuid::new_v4()));
         fs::create_dir_all(root.join("tests")).unwrap();
-        fs::write(root.join("Cargo.toml"), "[package]\nname='demo'\nversion='0.1.0'\n").unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='demo'\nversion='0.1.0'\n",
+        )
+        .unwrap();
         let test = root.join("tests/contract.rs");
         fs::write(&test, "#[test] fn test() { assert_eq!(wanted(1), 1) }\n").unwrap();
         assert!(validate_contract_test(&root, Path::new("tests/contract.rs"), "wanted").is_ok());
