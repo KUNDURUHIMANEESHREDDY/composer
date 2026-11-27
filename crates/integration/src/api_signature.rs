@@ -30,17 +30,32 @@ fn identifier(s: &str) -> bool {
 fn allowed_type(s: &str, is_result: bool) -> bool {
     matches!(
         s,
-        "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
-            | "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
-            | "f32" | "f64" | "char" | "bool" | "String"
+        "u8" | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "f32"
+            | "f64"
+            | "char"
+            | "bool"
+            | "String"
     ) || (!is_result && s == "&str")
         || (is_result && s == "()")
 }
 
 fn parse_rule(input: &str) -> Result<Signature, VerifiedRustError> {
-    let bad = || VerifiedRustError::Unsafe(format!(
-        "unsupported API signature: {input}; expected source::item=public_fn(u16)->u64"
-    ));
+    let bad = || {
+        VerifiedRustError::Unsafe(format!(
+            "unsupported API signature: {input}; expected source::item=public_fn(u16)->u64"
+        ))
+    };
     if input.is_empty() || input.len() > MAX_RULE_BYTES {
         return Err(bad());
     }
@@ -63,9 +78,7 @@ fn parse_rule(input: &str) -> Result<Signature, VerifiedRustError> {
             .map(|s| s.trim().to_owned())
             .collect::<Vec<_>>()
     };
-    if parameters.len() > MAX_PARAMETERS
-        || !parameters.iter().all(|s| allowed_type(s, false))
-    {
+    if parameters.len() > MAX_PARAMETERS || !parameters.iter().all(|s| allowed_type(s, false)) {
         return Err(bad());
     }
     Ok(Signature {
@@ -105,9 +118,9 @@ pub(crate) fn apply_verified_api_signatures(
     let original = fs::read_to_string(&lib)?;
     let mut names = BTreeSet::new();
     for alias in aliases {
-        let (_, name) = alias.split_once('=').ok_or_else(|| {
-            VerifiedRustError::Unsafe("invalid previous alias rule".into())
-        })?;
+        let (_, name) = alias
+            .split_once('=')
+            .ok_or_else(|| VerifiedRustError::Unsafe("invalid previous alias rule".into()))?;
         names.insert(name.to_owned());
     }
     let mut parsed = Vec::new();
@@ -115,20 +128,29 @@ pub(crate) fn apply_verified_api_signatures(
     for item in requested {
         let adapter = parse_rule(item)?;
         if adapter.name == module_name || !names.insert(adapter.name.clone()) {
-            return Err(VerifiedRustError::Unsafe(
-                format!("signature adapter destination collision: {}", adapter.name),
-            ));
+            return Err(VerifiedRustError::Unsafe(format!(
+                "signature adapter destination collision: {}",
+                adapter.name
+            )));
         }
         parsed.push(adapter);
     }
     let mut updated = original;
     for item in &parsed {
-        let params = item.parameters.iter().enumerate()
+        let params = item
+            .parameters
+            .iter()
+            .enumerate()
             .map(|(index, ty)| format!("arg{index}: {ty}"))
-            .collect::<Vec<_>>().join(", ");
-        let arguments = item.parameters.iter().enumerate()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let arguments = item
+            .parameters
+            .iter()
+            .enumerate()
             .map(|(index, _)| format!("::core::convert::Into::into(arg{index})"))
-            .collect::<Vec<_>>().join(", ");
+            .collect::<Vec<_>>()
+            .join(", ");
         // Safe and intentionally limited: Rust chooses each source argument
         // type and only accepts an actual Into conversion (never a lossy as).
         // The requested output conversion is also typechecked by Rust.
@@ -155,7 +177,13 @@ mod tests {
         assert_eq!(spec.name, "adapted");
         assert_eq!(spec.parameters, vec!["u16"]);
         assert_eq!(spec.result, "u64");
-        assert_eq!(parse_rule("math::yes=bool_value()->bool").unwrap().parameters.len(), 0);
+        assert_eq!(
+            parse_rule("math::yes=bool_value()->bool")
+                .unwrap()
+                .parameters
+                .len(),
+            0
+        );
         for invalid in [
             "math::double=bad(u16;panic!())->u64",
             "math::double=bad(Vec<u8>)->u64",
@@ -176,25 +204,31 @@ mod tests {
         let lib = root.join("src/lib.rs");
         fs::write(&lib, "pub fn existing() {}\n").unwrap();
         let failed = apply_verified_api_signatures(
-            &root, "composer_demo",
-            &["math::double=adapted(u16)->u64".into(),
-              "math::other=adapted(u16)->u64".into()],
-            &[]
+            &root,
+            "composer_demo",
+            &[
+                "math::double=adapted(u16)->u64".into(),
+                "math::other=adapted(u16)->u64".into(),
+            ],
+            &[],
         );
         assert!(matches!(failed, Err(VerifiedRustError::Unsafe(_))));
         assert_eq!(fs::read_to_string(&lib).unwrap(), "pub fn existing() {}\n");
         let failed = apply_verified_api_signatures(
-            &root, "composer_demo",
+            &root,
+            "composer_demo",
             &["math::double=adapted(u16)->u64".into()],
             &["math::double=adapted".into()],
         );
         assert!(failed.is_err());
         assert_eq!(fs::read_to_string(&lib).unwrap(), "pub fn existing() {}\n");
         let added = apply_verified_api_signatures(
-            &root, "composer_demo",
+            &root,
+            "composer_demo",
             &["math::double=adapted(u16)->u64".into()],
-            &[]
-        ).unwrap();
+            &[],
+        )
+        .unwrap();
         assert_eq!(added.len(), 1);
         let result = fs::read_to_string(&lib).unwrap();
         assert!(result.contains("pub fn adapted(arg0: u16) -> u64"));

@@ -159,7 +159,10 @@ pub fn compose_verified_rust(
         let verified_api_aliases =
             apply_verified_api_aliases(&staged, &wired.module_name, &options.api_aliases)?;
         let verified_api_signatures = crate::api_signature::apply_verified_api_signatures(
-            &staged, &wired.module_name, &options.api_signatures, &options.api_aliases,
+            &staged,
+            &wired.module_name,
+            &options.api_signatures,
+            &options.api_aliases,
         )?;
         preserve_source_attribution(&capsule.manifest, &capsule.root, &staged)?;
         let image_id = inspect_local_image_id()?;
@@ -559,15 +562,23 @@ fn parse_versioned_dependency(
     let (version, mut features) = match dependency {
         toml::Value::String(v) => (v.clone(), Vec::new()),
         toml::Value::Table(table) => {
-            if table.keys().any(|key| key != "version" && key != "features") {
+            if table
+                .keys()
+                .any(|key| key != "version" && key != "features")
+            {
                 return Err(VerifiedRustError::Dependency(format!(
                     "{name} has unsupported dependency keys; only version and features are supported"
                 )));
             }
-            let v = table.get("version").and_then(toml::Value::as_str)
-                .ok_or_else(|| VerifiedRustError::Dependency(format!(
-                    "{name} has no direct version requirement"
-                )))?.to_owned();
+            let v = table
+                .get("version")
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| {
+                    VerifiedRustError::Dependency(format!(
+                        "{name} has no direct version requirement"
+                    ))
+                })?
+                .to_owned();
             let list = match table.get("features") {
                 Some(value) => value.as_array().ok_or_else(|| {
                     VerifiedRustError::Dependency(format!(
@@ -588,8 +599,11 @@ fn parse_versioned_dependency(
                         "{name} contains a non-string dependency feature"
                     ))
                 })?;
-                if f.is_empty() || f.len() > 48
-                    || !f.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                if f.is_empty()
+                    || f.len() > 48
+                    || !f
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
                 {
                     return Err(VerifiedRustError::Dependency(format!(
                         "{name} uses unsupported feature syntax: {f}"
@@ -599,9 +613,11 @@ fn parse_versioned_dependency(
             }
             (v, names)
         }
-        _ => return Err(VerifiedRustError::Dependency(format!(
-            "{name} uses an unsupported non-version dependency"
-        ))),
+        _ => {
+            return Err(VerifiedRustError::Dependency(format!(
+                "{name} uses an unsupported non-version dependency"
+            )));
+        }
     };
     features.sort();
     features.dedup();
@@ -609,8 +625,11 @@ fn parse_versioned_dependency(
 }
 
 fn validated_requirement(name: &str, version: &str) -> Result<String, VerifiedRustError> {
-    if version.is_empty() || version.len() > 128
-        || !version.bytes().all(|b| b.is_ascii_alphanumeric() || b" .,=*^~<>+-".contains(&b))
+    if version.is_empty()
+        || version.len() > 128
+        || !version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b" .,=*^~<>+-".contains(&b))
     {
         return Err(VerifiedRustError::Dependency(format!(
             "{name} has an unsupported version requirement"
@@ -711,9 +730,11 @@ fn merge_direct_cargo_dependencies(
             entry.file_kind == "dependency_manifest"
                 && entry.source_path.as_deref() == Some(Path::new("Cargo.toml"))
         })
-        .ok_or_else(|| VerifiedRustError::Dependency(
-            "capsule has no root Cargo.toml; nested package manifests are unsupported".into()
-        ))?;
+        .ok_or_else(|| {
+            VerifiedRustError::Dependency(
+                "capsule has no root Cargo.toml; nested package manifests are unsupported".into(),
+            )
+        })?;
     let source = fs::read_to_string(capsule_root.join(&cargo.capsule_path))?;
     let source_value: toml::Value =
         toml::from_str(&source).map_err(|err| VerifiedRustError::Toml(err.to_string()))?;
@@ -723,19 +744,22 @@ fn merge_direct_cargo_dependencies(
         .map_err(|err| VerifiedRustError::Toml(err.to_string()))?;
     if target_value.get("package").is_none() || target_value.get("workspace").is_some() {
         return Err(VerifiedRustError::Dependency(
-            "only standalone Cargo packages (not workspace roots) are supported".into()
+            "only standalone Cargo packages (not workspace roots) are supported".into(),
         ));
     }
-    let source_table = source_value.get("dependencies")
+    let source_table = source_value
+        .get("dependencies")
         .and_then(toml::Value::as_table);
-    let target = target_value.as_table_mut()
+    let target = target_value
+        .as_table_mut()
         .ok_or_else(|| VerifiedRustError::Toml("target manifest must be TOML table".into()))?;
-    let deps = target.entry("dependencies".to_owned())
+    let deps = target
+        .entry("dependencies".to_owned())
         .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
         .as_table_mut()
-        .ok_or_else(|| VerifiedRustError::Dependency(
-            "target [dependencies] must be a TOML table".into()
-        ))?;
+        .ok_or_else(|| {
+            VerifiedRustError::Dependency("target [dependencies] must be a TOML table".into())
+        })?;
     let mut added = Vec::new();
     let mut feature_changes = Vec::new();
     for (name, requested) in &source_deps {
@@ -745,17 +769,20 @@ fn merge_direct_cargo_dependencies(
         let (_, requested_features) = parse_versioned_dependency(name, from_source)?;
         match deps.get_mut(name) {
             None => {
-                deps.insert(name.clone(), dependency_with_features(requested, &requested_features));
+                deps.insert(
+                    name.clone(),
+                    dependency_with_features(requested, &requested_features),
+                );
                 added.push(format!("{name} = {requested}"));
                 if !requested_features.is_empty() {
                     feature_changes.push(format!(
-                        "{name}: enabled [{}]", requested_features.join(", ")
+                        "{name}: enabled [{}]",
+                        requested_features.join(", ")
                     ));
                 }
             }
             Some(existing) => {
-                let (retained, mut existing_features) =
-                    parse_versioned_dependency(name, existing)?;
+                let (retained, mut existing_features) = parse_versioned_dependency(name, existing)?;
                 // Never rewrite existing target version requirements.
                 if &retained != requested {
                     semver::VersionReq::parse(requested).map_err(|err| {
@@ -769,7 +796,8 @@ fn merge_direct_cargo_dependencies(
                         ))
                     })?;
                 }
-                let newly_enabled = requested_features.iter()
+                let newly_enabled = requested_features
+                    .iter()
                     .filter(|f| !existing_features.contains(f))
                     .cloned()
                     .collect::<Vec<_>>();
@@ -778,15 +806,16 @@ fn merge_direct_cargo_dependencies(
                     existing_features.sort();
                     existing_features.dedup();
                     *existing = dependency_with_features(&retained, &existing_features);
-                    feature_changes.push(format!(
-                        "{name}: enabled [{}]", newly_enabled.join(", ")
-                    ));
+                    feature_changes.push(format!("{name}: enabled [{}]", newly_enabled.join(", ")));
                 }
             }
         }
     }
-    fs::write(target_manifest, toml::to_string_pretty(&target_value)
-        .map_err(|err| VerifiedRustError::Toml(err.to_string()))?)?;
+    fs::write(
+        target_manifest,
+        toml::to_string_pretty(&target_value)
+            .map_err(|err| VerifiedRustError::Toml(err.to_string()))?,
+    )?;
     Ok((added, feature_changes))
 }
 
@@ -1240,7 +1269,8 @@ mod tests {
         fs::write(
             target.join("Cargo.toml"),
             "[package]\nname='b'\nversion='0.1.0'\n[dependencies]\nserde='1'\n",
-        ).unwrap();
+        )
+        .unwrap();
         let (added, changes) =
             merge_direct_cargo_dependencies(&manifest, &capsule, &target).unwrap();
         assert!(added.is_empty());
@@ -1249,7 +1279,9 @@ mod tests {
         assert!(manifest_text.contains("derive"));
         assert_eq!(
             merge_direct_cargo_dependencies(&manifest, &capsule, &target)
-                .unwrap().1.len(),
+                .unwrap()
+                .1
+                .len(),
             0
         );
         // Never transplant arbitrary git/path/renamed dependencies.
@@ -1259,7 +1291,10 @@ mod tests {
         ).unwrap();
         let before = fs::read_to_string(target.join("Cargo.toml")).unwrap();
         assert!(merge_direct_cargo_dependencies(&manifest, &capsule, &target).is_err());
-        assert_eq!(fs::read_to_string(target.join("Cargo.toml")).unwrap(), before);
+        assert_eq!(
+            fs::read_to_string(target.join("Cargo.toml")).unwrap(),
+            before
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
