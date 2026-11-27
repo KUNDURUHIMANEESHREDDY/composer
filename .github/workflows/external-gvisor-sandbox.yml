@@ -1,0 +1,64 @@
+name: External gVisor runsc sandbox acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/external-gvisor-sandbox.yml
+      - crates/integration/src/verified.rs
+      - tests/test_pinned_git_string_adapter_public.py
+
+permissions:
+  contents: read
+
+jobs:
+  gvisor-runsc:
+    if: github.repository == 'KUNDURUHIMANEESHREDDY/composer' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Preload verifier image
+        run: docker pull rust:1.99-slim
+      - name: Install independently maintained gVisor through its signed APT repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y apt-transport-https ca-certificates curl gnupg
+          curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y runsc
+          sudo runsc install
+          sudo systemctl restart docker
+          dpkg-query -W runsc | tee gvisor-version.txt
+          docker info --format '{{json .Runtimes}}' | tee docker-runtimes.json
+          grep -q '"runsc"' docker-runtimes.json
+      - name: Prove runsc launches the existing Rust image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --runtime=runsc --pull=never --network=none --read-only \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            rust:1.99-slim sh -c 'echo COMPOSER_GVISOR_SMOKE_OK'
+      - name: Execute third-party Git capability import through runsc, not runc
+        shell: bash
+        env:
+          COMPOSER_VERIFIER_RUNTIME: runsc
+        run: |
+          set -euo pipefail
+          python3 -u tests/test_pinned_git_string_adapter_public.py 2>&1 | tee gvisor-git-adapter-evidence.log
+          grep -q 'PASS pinned Git source/type adapter 3/3' gvisor-git-adapter-evidence.log
+          grep -q 'EVIDENCE_JSON' gvisor-git-adapter-evidence.log
+      - name: Preserve runtime identity and test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-gvisor-runsc-verified-evidence
+          path: |
+            gvisor-version.txt
+            docker-runtimes.json
+            gvisor-git-adapter-evidence.log
+          if-no-files-found: warn
