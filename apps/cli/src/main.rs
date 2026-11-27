@@ -3,7 +3,8 @@ use std::{error::Error, fs, net::SocketAddr, path::PathBuf};
 use clap::{Parser, Subcommand};
 use composer_core::ProjectSpec;
 use composer_integration::{
-    IntegrationOptions, apply_integration, plan_integration, verify_capsule,
+    IntegrationOptions, RustWiringOptions, apply_integration, plan_integration, verify_capsule,
+    wire_rust_module,
 };
 use composer_intelligence::{
     CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
@@ -98,6 +99,16 @@ enum Command {
         /// New path inside the target repository; defaults to .composer/integrations/<capability-id>.
         #[arg(long)]
         destination: Option<PathBuf>,
+    },
+    /// Opt-in source wiring for a single reviewed, standalone Rust module.
+    WireRust {
+        /// Verified Feature Capsule path.
+        capsule: PathBuf,
+        /// Target Rust crate root (must contain src/lib.rs or src/main.rs).
+        target: PathBuf,
+        /// Assert independent license and source review; does not certify safety.
+        #[arg(long)]
+        license_reviewed: bool,
     },
     /// Start the local composition API.
     Serve {
@@ -202,6 +213,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 capsule_root: capsule,
                 target_root: target,
                 destination,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::WireRust {
+            capsule,
+            target,
+            license_reviewed,
+        } => {
+            let result = wire_rust_module(&RustWiringOptions {
+                capsule_root: capsule,
+                target_root: target,
+                license_reviewed,
             })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }

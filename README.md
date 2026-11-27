@@ -83,6 +83,14 @@ Stage the verified capsule into a new target-local namespace:
 cargo run -p composer-cli -- integrate .composer/capsules/authentication .
 ```
 
+Opt-in source-level wiring of a **reviewed standalone Rust** capsule into a Rust target:
+
+```powershell
+cargo run -p composer-cli -- wire-rust .composer/capsules/authentication path/to/target --license-reviewed
+```
+
+The flag records an explicit review assertion; Composer does not perform legal approval. This command requires exactly one Rust source file, existing matching direct dependencies, no unresolved/unfollowed references, no symbol collisions, and a Rust `src/lib.rs` or `src/main.rs` target. It creates `src/composer_<capability>.rs`, adds a module declaration to the target entrypoint, and preserves a `src/.composer_<capability>.root-backup` file. It **does not** run untrusted code, prove compilation, or install dependencies. Use an approved isolated build/test environment before trusting the integration.
+
 Start the API:
 
 ```powershell
@@ -138,7 +146,7 @@ The capsule is an extraction artifact, not a guaranteed standalone package. Its 
 
 The generated adapter contract is a draft that lists candidate symbols and unresolved mapping questions. `composer integrate` stages only manifest-listed capsule files plus plan, verification, adapter-contract, and handoff documentation into a new `.composer/integrations/<capability-id>/` directory. It refuses to overwrite an existing destination and re-verifies the staged capsule before finalizing the directory.
 
-This is safe staging, not source-level integration: it does not rewrite target files, generate production adapter code, install dependencies, run repository scripts, build, or test.
+`composer integrate` remains safe staging only. A separate opt-in `composer wire-rust` command implements a restricted single-file Rust source-level integration path, with a persistent entrypoint backup and fail-closed compatibility gates. General-purpose adapter generation, source rewrites, dependency solving and sandboxed verification remain unimplemented.
 
 ## Current limitations
 
@@ -149,7 +157,7 @@ This is safe staging, not source-level integration: it does not rewrite target f
 - Dependency inventory covers selected direct manifest declarations; transitive resolution, lockfile solving, registry integrity, and vulnerability scanning are not implemented.
 - SPDX expressions are syntax-checked only; license identifiers, policy compatibility, and legal approval are not established.
 - Feature ranking is lexical, not embedding-based; feature boundaries are conservative file-level approximations.
-- Adapter contracts require human review; production adapter generation and source-level patching are not implemented.
+- Adapter contracts require human review; general-purpose production adapter generation and multi-file/cross-language source patching are not implemented. The opt-in `wire-rust` path supports only standalone single-file Rust modules.
 - Capsule hash verification does not attest producer authenticity.
 - No untrusted repository build/test execution is enabled; sandboxed verification and bounded repair remain future work.
 

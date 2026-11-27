@@ -629,10 +629,7 @@ impl SpdxParser {
 
     fn parse_primary(&mut self) -> bool {
         if self.consume("(") {
-            if !self.parse_or() || !self.consume(")") {
-                return false;
-            }
-            true
+            self.parse_or() && self.consume(")")
         } else {
             self.consume_identifier()
         }
