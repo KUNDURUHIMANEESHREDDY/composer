@@ -350,7 +350,7 @@ pub fn verify_upstream_git(
             &options.public_symbol,
             &options.target_alias,
         ).ok_or_else(|| VerifiedRustError::Unsafe(
-            "no unique supported public borrowed-string or concrete scalar function in pinned upstream Git source".into(),
+            "no unique supported public borrowed-string function or concrete scalar function in pinned upstream Git source".into(),
         ))?)
     } else {
         None
