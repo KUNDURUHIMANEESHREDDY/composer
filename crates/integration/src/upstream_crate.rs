@@ -450,6 +450,45 @@ mod tests {
     }
 
     #[test]
+    fn generates_only_bounded_compiler_checked_borrowing_adapters() {
+        let options = UpstreamCrateOptions {
+            target_root: PathBuf::from("original"),
+            output_root: PathBuf::from("new-output"),
+            package: "deunicode".into(),
+            version: "1.6.2".into(),
+            public_symbol: "deunicode".into(),
+            target_alias: "transliterate".into(),
+            target_signature: Some("transliterate(String)->String".into()),
+            contract_test: PathBuf::from("tests/contract.rs"),
+            registry_cache: PathBuf::from("registry"),
+            upstream_repository: "https://github.com/kornelski/deunicode".into(),
+            upstream_commit: "cfb8552fbbdf6d1f3f996ee4f2e78ec5e482bcef".into(),
+            license_reviewed: true,
+        };
+        let adapter = reviewed_owned_string_adapter(&options).unwrap().unwrap();
+        assert!(adapter.contains("deunicode::deunicode(arg0.as_str())"));
+        assert!(adapter.contains("pub fn transliterate(arg0: ::std::string::String)"));
+        for invalid in [
+            "transliterate(String);panic!()->String",
+            "different(String)->String",
+            "transliterate(Vec<u8>)->String",
+            "transliterate(String)->&str",
+            "transliterate()->String",
+        ] {
+            let proposal = UpstreamCrateOptions {
+                target_signature: Some(invalid.into()),
+                ..options.clone()
+            };
+            assert!(reviewed_owned_string_adapter(&proposal).is_err(), "{invalid}");
+        }
+        let unchanged = UpstreamCrateOptions {
+            target_signature: None,
+            ..options
+        };
+        assert!(reviewed_owned_string_adapter(&unchanged).unwrap().is_none());
+    }
+
+    #[test]
     fn fails_without_license_review_before_touching_target() {
         let opts = UpstreamCrateOptions {
             target_root: PathBuf::from("does-not-exist"),
