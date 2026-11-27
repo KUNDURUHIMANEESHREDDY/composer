@@ -356,7 +356,7 @@ fn valid_public_alias_identifier(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
 }
 
-fn copy_bounded_target(source: &Path, output: &Path) -> Result<(), VerifiedRustError> {
+pub(crate) fn copy_bounded_target(source: &Path, output: &Path) -> Result<(), VerifiedRustError> {
     let mut total_files = 0usize;
     let mut total_bytes = 0u64;
     for name in [
@@ -963,7 +963,7 @@ fn mount_arg(path: &Path, target: &str, readonly: bool) -> Result<String, Verifi
 /// temporary project directories without making copied source world-readable.
 /// Docker Desktop on Windows continues to use an unprivileged fixed UID.
 #[cfg(unix)]
-fn nonroot_container_user() -> Result<String, VerifiedRustError> {
+pub(crate) fn nonroot_container_user() -> Result<String, VerifiedRustError> {
     let mut ids = Vec::new();
     for flag in ["-u", "-g"] {
         let output = Command::new("id").arg(flag).output().map_err(|err| {
@@ -986,11 +986,11 @@ fn nonroot_container_user() -> Result<String, VerifiedRustError> {
 }
 
 #[cfg(not(unix))]
-fn nonroot_container_user() -> Result<String, VerifiedRustError> {
+pub(crate) fn nonroot_container_user() -> Result<String, VerifiedRustError> {
     Ok("65534:65534".into())
 }
 
-fn inspect_local_image_id() -> Result<String, VerifiedRustError> {
+pub(crate) fn inspect_local_image_id() -> Result<String, VerifiedRustError> {
     let output = Command::new("docker")
         .args(["image", "inspect", "--format", "{{.Id}}", DEFAULT_IMAGE])
         .output()
@@ -1012,7 +1012,7 @@ fn inspect_local_image_id() -> Result<String, VerifiedRustError> {
     Ok(value)
 }
 
-fn docker_build(
+pub(crate) fn docker_build(
     staged: &Path,
     results: &Path,
     registry: Option<&Path>,
