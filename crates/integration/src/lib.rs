@@ -29,12 +29,12 @@ pub use compatibility::{
     CompatibilityPlan, IntegrationStrategy, SymbolCollision, TargetProfile, TestEvidence,
     plan_integration,
 };
-pub use external_discovery::{
-    ExternalDiscoveryOptions, ExternalDiscoveryResult, discover_external_rust,
-};
 pub use dependencies::{
     DependencyEcosystem, DependencyInventory, DependencyKind, DependencyRequirement,
     LicenseDeclaration, RequirementStatus,
+};
+pub use external_discovery::{
+    ExternalDiscoveryOptions, ExternalDiscoveryResult, discover_external_rust,
 };
 pub use upstream_crate::{UpstreamCrateOptions, UpstreamCrateResult, verify_upstream_crate};
 pub use upstream_recovery::{
