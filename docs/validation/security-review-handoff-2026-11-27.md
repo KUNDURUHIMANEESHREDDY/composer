@@ -33,6 +33,10 @@ Status: **NOT independently audited or approved.** This is a review request, not
 
 The Python behavioral run requires Docker, the pinned image and offline Cargo cache. A Rust unit-test pass is not evidence that these Docker scenarios ran.
 
+## Automated security-gate integration (not an external audit)
+- GitHub's upstream `actions/dependency-review-action@v5` is configured for read-only pull-request checks, including runtime, development and unknown dependency scopes. It catches newly introduced advisories; it **does not** audit unchanged dependencies, establish build-image provenance, or certify hostile-code isolation. Record its hosted check outcome before treating the gate as operational.
+- The review still requires an unaffiliated security assessor and an explicit release decision.
+
 ## Preliminary automated scanning (not an external audit)
 - Semgrep 1.181.0 with the public p/rust ruleset reported **10 temp_dir findings** across Rust unit-test fixtures. All reported call sites are inside cfg(test) sections and use UUID-suffixed directories; they are **untriaged scanner findings**, not a clean scan or an external security conclusion.
 - Windows Docker daemon is unavailable (Linux engine named pipe missing). Only approximately 1.6 GiB of RAM was free when checked. Do not infer Docker behavioral results from host compilation.

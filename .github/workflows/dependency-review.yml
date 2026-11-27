@@ -1,0 +1,20 @@
+name: Dependency vulnerability review
+
+on:
+  pull_request:
+
+# Read-only checks. This is automated PR-diff screening, NOT a security audit.
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source without running it
+        uses: actions/checkout@v6
+      - name: Reject newly introduced dependency advisories
+        uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: low
+          fail-on-scopes: runtime,development,unknown
