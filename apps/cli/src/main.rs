@@ -355,8 +355,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             excluded_owners,
             license_reviewed,
         } => {
-            let result = auto_external::compose_approved_external(
-                &auto_external::AutoExternalOptions {
+            let result =
+                auto_external::compose_approved_external(&auto_external::AutoExternalOptions {
                     capability,
                     catalog,
                     target,
@@ -366,8 +366,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     registry_cache,
                     excluded_owners,
                     license_reviewed,
-                },
-            )?;
+                })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Command::Integrate {
