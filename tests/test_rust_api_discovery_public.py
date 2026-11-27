@@ -124,7 +124,7 @@ def main() -> None:
                 "demangle",
                 "https://github.com/rust-lang/rustc-demangle.git",
                 "4023665a9bafb7cd9808033fd76fa50f83b9542c",
-                "demangle", "auto-demangle",
+                "Demangle", "auto-demangle",
             ),
         ]
         for name, url, sha, seed, capability in unfamiliar:
