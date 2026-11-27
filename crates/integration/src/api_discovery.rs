@@ -303,7 +303,8 @@ fn rank_candidate(target: &ApiFunction, source: &ApiFunction) -> Option<u32> {
 
 fn module_path(path: &Path, multifile: bool) -> Option<String> {
     let mut components = path.components();
-    if components.next()? != Component::Normal("src".as_ref()) { return None; }
+    let Component::Normal(root) = components.next()? else { return None };
+    if root != "src" { return None; }
     let mut names = Vec::new();
     for part in components {
         let Component::Normal(value) = part else { return None };
