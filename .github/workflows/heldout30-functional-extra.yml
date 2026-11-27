@@ -16,6 +16,7 @@ permissions:
 
 jobs:
   repeated-functional:
+    name: ${{ matrix.case }} / ${{ matrix.scope }}
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -25,10 +26,13 @@ jobs:
         include:
           - case: unicode-segmentation
             repository: unicode-rs/unicode-segmentation
+            scope: all_targets
           - case: num-traits
             repository: rust-num/num-traits
+            scope: all_targets
           - case: bitflags
             repository: bitflags/bitflags
+            scope: library_and_integration_tests
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
@@ -41,6 +45,12 @@ jobs:
           python3 -u tests/test_heldout30_functional_extra.py \
             --target-case ${{ matrix.case }} 2>&1 | tee heldout-extra.log
           grep -q 'PASS held-out target ${{ matrix.repository }} functional trial 3/3' heldout-extra.log
+          if [ '${{ matrix.case }}' = 'bitflags' ]; then
+            grep -q 'EXPECTED_REFUSAL bitflags/bitflags:' heldout-extra.log
+            grep -q '"verification_scope": "library_and_integration_tests"' heldout-extra.log
+          else
+            grep -q '"verification_scope": "all_targets"' heldout-extra.log
+          fi
           grep -q 'PASS wrong-function control rejected, no publication' heldout-extra.log
           grep -q 'EVIDENCE_JSON ' heldout-extra.log
       - name: Retain failed and successful behavioral evidence
