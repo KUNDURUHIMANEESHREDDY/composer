@@ -1,6 +1,7 @@
 //! Independent Feature Capsule verification, dependency/license inventory,
 //! target compatibility analysis, and safe isolated integration staging.
 
+#![recursion_limit = "256"]
 mod api_discovery;
 mod api_signature;
 mod apply;
