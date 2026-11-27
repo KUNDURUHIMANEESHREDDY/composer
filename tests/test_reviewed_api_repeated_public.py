@@ -18,8 +18,8 @@ from test_pinned_public_multifile import (
     cli, clone_exact, make_capsule, prepare_registry, run,
 )
 
-GLOB_REPO = "https://github.com/rust-lang/glob.git"
-GLOB_SHA = "057cef2824f5a96f738e52d7d8ca3e024381bcc6"
+HASH_REPO = "https://github.com/rust-lang/rustc-hash.git"
+HASH_SHA = "fdfe9e6ebea0f0bd3de95d5af849f5d03f4b7fbb"
 REPEATS = int(os.environ.get("COMPOSER_REVIEWED_REPEATS", "3"))
 
 
@@ -137,11 +137,11 @@ def main() -> None:
         root = Path(temp)
         algo = root / "source-algorithms"
         ebtech = root / "source-ebtech"
-        glob = root / "target-glob"
+        hash_target = root / "target-rustc-hash"
         clone_exact(GEOMETRY_REPO, GEOMETRY_SHA, algo)
         clone_exact(SOURCE_REPO, SOURCE_SHA, ebtech)
-        clone_exact(GLOB_REPO, GLOB_SHA, glob)
-        assert (glob / "LICENSE-MIT").is_file()
+        clone_exact(HASH_REPO, HASH_SHA, hash_target)
+        assert (hash_target / "LICENSE-MIT").is_file()
         totient = make_capsule(
             algo, root, "euler_totient",
             "src/number_theory/euler_totient.rs", "reviewed-totient",
@@ -153,7 +153,7 @@ def main() -> None:
             "src/math/binary_exponentiation.rs", "reviewed-exponent",
             {"src/math/binary_exponentiation.rs"}, expected_sha=GEOMETRY_SHA,
         )
-        assert prepare_registry(glob, root, "glob"), "glob offline registry cache preparation failed"
+        assert prepare_registry(hash_target, root, "rustc-hash"), "rustc-hash offline registry cache preparation failed"
         assert prepare_registry(ebtech, root, "ebtech"), "EbTech registry cache preparation failed"
         rejection_check(root, algo, totient, ebtech)
         outcomes = []
@@ -170,9 +170,9 @@ def main() -> None:
                 "adapted_totient", "euler_totient=adapted_totient(u32)->u128",
             ))
             outcomes.append(case(
-                root, iteration, "exponent-glob", algo, exponent, glob, "glob",
+                root, iteration, "exponent-rustc-hash", algo, exponent, hash_target, "rustc_hash",
                 "pub fn binary_exponentiation_checked(base: u16, power: u16) -> u128 { unimplemented!() }\n",
-                "use glob::binary_exponentiation_checked;\n"
+                "use rustc_hash::binary_exponentiation_checked;\n"
                 "#[test] fn matches_exponentiation_contract() {\n"
                 "assert_eq!(binary_exponentiation_checked(2_u16, 10_u16), 1024_u128);\n"
                 "assert_eq!(binary_exponentiation_checked(3_u16, 4_u16), 81_u128);\n"
@@ -187,7 +187,7 @@ def main() -> None:
             "total_attempts": len(outcomes),
             "successful_attempts": len(outcomes),
             "cases": outcomes,
-            "limitations": "Two curated source functions from one pinned public source repo, two unrelated existing public targets; contract tests supplied manually; no general reliability inference.",
+            "limitations": "Two curated source functions from one pinned public source repo, two unrelated existing public targets including no_std crate; contract tests supplied manually; no general reliability inference.",
         }, sort_keys=True), flush=True)
         print("PASS 6/6 reviewed suggestion -> offline Docker compilation -> "
               "independent target contract checks on two existing public targets",
