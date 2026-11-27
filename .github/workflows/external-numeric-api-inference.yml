@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Pull existing non-root isolated Rust image
         run: docker pull rust:1.99-slim
       - name: Import published-independent source pinned by exact Git SHA and infer scalar API
@@ -29,7 +29,7 @@ jobs:
           python3 -u tests/test_pinned_git_numeric_api_inference.py 2>&1 | tee external-numeric-api-evidence.log
       - name: Retain success and failure evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
         with:
           name: external-numeric-api-inference-evidence
           path: external-numeric-api-evidence.log

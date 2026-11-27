@@ -26,9 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Prepare existing offline verifier
         run: docker pull rust:1.99-slim
       - name: Verify truly unpublished Git-only code in independent target
@@ -38,9 +38,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
       - name: Install stable Windows Rust compiler
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Verify Windows Rust format
         run: cargo fmt --all -- --check
       - name: Verify committed Cargo.lock resolves unchanged on clean Windows

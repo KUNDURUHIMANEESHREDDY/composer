@@ -20,8 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Prepare restricted Docker verifier
         run: docker pull rust:1.99-slim
       - name: Reuse a checked Git dependency and compile a reviewed String adapter in Docker
@@ -31,7 +31,7 @@ jobs:
           python3 -u tests/test_pinned_git_string_adapter_public.py 2>&1 | tee git-string-adapter.log
       - name: Preserve passing and failing evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
         with:
           name: third-party-git-api-adapter-evidence
           path: git-string-adapter.log

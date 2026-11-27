@@ -18,8 +18,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Verify clean Windows lockfile and compile Rust workspace
         run: cargo check --locked --workspace
       - name: Run native integration library regression tests
@@ -43,9 +43,30 @@ jobs:
             throw "Windows gVisor preflight script failed PowerShell AST parsing"
           }
           Write-Output "PASS Windows gVisor preflight syntax; actual Docker Desktop runtime NOT tested"
+      - name: Regression test: missing Docker Desktop engine fails closed and is classified
+        shell: pwsh
+        run: |
+          # Simulated failure only. A passing mock does NOT prove live gVisor.
+          function docker {
+            if ($args[0] -eq "context") {
+              $global:LASTEXITCODE = 0
+              Write-Output "desktop-linux"
+            }
+            else {
+              $global:LASTEXITCODE = 1
+            }
+          }
+          $evidence = Join-Path $env:RUNNER_TEMP "composer-gvisor-daemon-missing.json"
+          & ./scripts/check-windows-docker-gvisor.ps1 -EvidencePath $evidence
+          $exit = $LASTEXITCODE
+          $result = Get-Content $evidence -Raw | ConvertFrom-Json
+          if ($exit -ne 2 -or $result.disposition -ne "docker_engine_unavailable" -or $result.verified_windows_docker_desktop_gvisor) {
+            throw "Missing Docker engine was misclassified or treated as success"
+          }
+          Write-Output "PASS mocked missing-engine diagnostic; live Docker Desktop still unverified"
       - name: Preserve Windows help output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
         with:
           name: composer-windows-rust-help
           path: windows-cli-help.log

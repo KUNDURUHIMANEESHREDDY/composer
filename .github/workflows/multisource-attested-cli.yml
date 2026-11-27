@@ -22,8 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Prepare existing offline verifier
         run: docker pull rust:1.99-slim
       - name: Verify 3 existing upstream implementations across 2 Git-only repositories and one verified target
@@ -39,9 +39,9 @@ jobs:
       attestations: write
       artifact-metadata: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
       - name: Install native Rust compiler
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Validate committed lockfile and formatting
         shell: pwsh
         run: |
@@ -49,6 +49,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Committed lockfile cannot resolve" }
           cargo fmt --all -- --check
           if ($LASTEXITCODE -ne 0) { throw "Rust format check failed" }
+      - name: Generate source SPDX SBOM using pinned upstream Syft
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # pinned upstream v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: composer-source.spdx.json
+          syft-version: v1.57.2
+          upload-artifact: false
+          upload-release-assets: false
       - name: Test native Windows workspace using committed lockfile
         run: cargo test --workspace --all-targets --locked
       - name: Compile portable release CLI from locked source
@@ -58,6 +67,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist/composer-windows-x64 | Out-Null
           Copy-Item target/release/composer.exe dist/composer-windows-x64/composer.exe
+          if (-not (Test-Path composer-source.spdx.json)) { throw "Source SBOM missing" }
+          Copy-Item composer-source.spdx.json dist/composer-windows-x64/composer-source.spdx.json
           $version = & dist/composer-windows-x64/composer.exe --version
           if ($LASTEXITCODE -ne 0) { throw "Packaged CLI failed to start" }
           Set-Content dist/composer-windows-x64/BUILD-INFO.txt -Value @(
@@ -74,10 +85,10 @@ jobs:
           if (-not (Test-Path dist/composer-windows-x64.zip)) { throw "ZIP missing" }
           Write-Output "PASS native release executable and portable archive"
       - name: GitHub Sigstore-backed build artifact attestation
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # pinned upstream
         with:
           subject-path: dist/composer-windows-x64.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
         with:
           name: composer-windows-x64-portable
           path: dist/composer-windows-x64.zip
@@ -92,7 +103,7 @@ jobs:
       contents: read
       attestations: read
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # pinned upstream
         with:
           name: composer-windows-x64-portable
           path: input
@@ -109,6 +120,12 @@ jobs:
           $folder = Join-Path $PWD "extracted/composer-windows-x64"
           $exe = Join-Path $folder "composer.exe"
           if (-not (Test-Path $exe)) { throw "Missing extracted CLI" }
+          $sbom = Join-Path $folder "composer-source.spdx.json"
+          if (-not (Test-Path $sbom)) { throw "Attested ZIP is missing source SBOM" }
+          $bill = Get-Content $sbom -Raw | ConvertFrom-Json
+          if ($bill.spdxVersion -ne "SPDX-2.3" -or @($bill.packages).Count -lt 1) {
+            throw "Source SBOM is not valid SPDX 2.3 with identified packages"
+          }
           $expected = (Get-Content (Join-Path $folder "composer.exe.sha256") -Raw).Trim().ToLowerInvariant()
           $actual = (Get-FileHash -Path $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($expected -ne $actual) { throw "Executable digest mismatch" }
