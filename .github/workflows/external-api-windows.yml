@@ -19,14 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Resolve Windows-target packages and compile workspace
-        shell: pwsh
-        run: |
-          cargo check --workspace
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          git diff -- Cargo.lock | Tee-Object -FilePath windows-lockfile-diff.patch
-          cargo check --locked --workspace
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify clean Windows lockfile and compile Rust workspace
+        run: cargo check --locked --workspace
       - name: Run native integration library regression tests
         run: cargo test --locked -p composer-integration --lib
       - name: Validate Composer CLI compiles and exposes Git import adapter
@@ -41,7 +35,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: composer-windows-rust-help
-          path: |
-            windows-cli-help.log
-            windows-lockfile-diff.patch
+          path: windows-cli-help.log
           if-no-files-found: warn
