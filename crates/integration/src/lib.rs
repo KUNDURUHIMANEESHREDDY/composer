@@ -1,6 +1,7 @@
 //! Independent Feature Capsule verification, dependency/license inventory,
 //! target compatibility analysis, and safe isolated integration staging.
 
+mod api_discovery;
 mod api_signature;
 mod apply;
 mod batch;
@@ -11,6 +12,10 @@ mod verified;
 mod verify;
 mod wire;
 
+pub use api_discovery::{
+    RustApiDiscoveryError, RustApiDiscoveryReport, RustApiSuggestion, RustTargetRequirement,
+    discover_rust_api_contracts,
+};
 pub use apply::{IntegrationError, IntegrationOptions, IntegrationResult, apply_integration};
 pub use batch::{
     BatchRustError, BatchRustOptions, BatchRustResult, BatchStep, compose_verified_rust_batch,

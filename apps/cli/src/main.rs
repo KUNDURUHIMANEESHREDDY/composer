@@ -4,8 +4,8 @@ use clap::{Parser, Subcommand};
 use composer_core::ProjectSpec;
 use composer_integration::{
     BatchRustOptions, IntegrationOptions, RustWiringOptions, VerifiedRustOptions,
-    apply_integration, compose_verified_rust, compose_verified_rust_batch, plan_integration,
-    verify_capsule, wire_rust_module,
+    apply_integration, compose_verified_rust, compose_verified_rust_batch,
+    discover_rust_api_contracts, plan_integration, verify_capsule, wire_rust_module,
 };
 use composer_intelligence::{
     CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
@@ -88,6 +88,17 @@ enum Command {
         /// Target application repository.
         target: PathBuf,
         /// Optional path for the compatibility plan JSON.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Suggest Rust API mappings for explicit, unfinished public target functions.
+    /// Read-only: suggestions require separate review and compiler verification.
+    SuggestRustApi {
+        /// Verified Feature Capsule directory.
+        capsule: PathBuf,
+        /// Target standalone library root with src/lib.rs containing todo!() stubs.
+        target: PathBuf,
+        /// Optional path to save machine-readable JSON recommendations.
         #[arg(long)]
         output: Option<PathBuf>,
     },
@@ -268,6 +279,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 license_reviewed,
             })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::SuggestRustApi {
+            capsule,
+            target,
+            output,
+        } => {
+            let report = discover_rust_api_contracts(&capsule, &target)?;
+            let serialized = serde_json::to_string_pretty(&report)?;
+            if let Some(path) = output {
+                // Never overwrite an existing report.
+                let mut file = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(path)?;
+                use std::io::Write;
+                file.write_all(serialized.as_bytes())?;
+            }
+            println!("{serialized}");
         }
         Command::VerifyRust {
             capsule,

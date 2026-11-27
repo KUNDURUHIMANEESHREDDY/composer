@@ -6,9 +6,12 @@ on:
     branches:
       - feat/pinned-multifile-realworld-benchmark
       - feat/compiler-gated-api-signatures-and-cargo-features
+      - feat/readonly-rust-api-contract-discovery
     paths:
       - .github/workflows/pinned-public-multifile.yml
       - tests/test_pinned_public_multifile.py
+      - tests/test_rust_api_discovery_public.py
+      - crates/integration/src/api_discovery.rs
 
 permissions:
   contents: read
@@ -27,3 +30,5 @@ jobs:
         run: docker pull rust:1.99-slim
       - name: Validate pinned public multi-file source against existing targets
         run: python3 tests/test_pinned_public_multifile.py
+      - name: Test read-only Rust API discovery on five pinned public source repos
+        run: python3 tests/test_rust_api_discovery_public.py
