@@ -218,6 +218,60 @@ pub fn discover_rust_api_contracts(
 /// must supply independent behavioral tests before publishing.
 /// Methods, modules, generics, async, unsafe, attrs that alter function shape,
 /// and unsupported argument or return types fail closed.
+/// Typed metadata for one uniquely resolved, top-level public Rust API.
+/// Only stable primitive/owned values and immutable borrowed strings are
+/// supported. Neither function names nor signatures establish meaning.
+#[derive(Debug, Clone)]
+pub(crate) struct InferredGitSignature {
+    pub(crate) target_signature: String,
+    pub(crate) source_parameters: Vec<String>,
+}
+
+/// Reuse Composer's existing Tree-sitter parser to extract a *type-only* call
+/// bridge from a reviewed, SHA-pinned upstream function. There is no algorithm
+/// generation and no trust in matching names as semantic proof: independent
+/// target-owned assertions remain mandatory for publication.
+pub(crate) fn infer_typed_git_signature(
+    pinned_source: &str,
+    upstream_symbol: &str,
+    target_alias: &str,
+) -> Option<InferredGitSignature> {
+    if !identifier(upstream_symbol) || !identifier(target_alias) {
+        return None;
+    }
+    let mut matches = scan_public_functions(pinned_source, Path::new("src/lib.rs"), "")
+        .into_iter()
+        .filter(|candidate| {
+            candidate.name == upstream_symbol
+                && candidate.parameters.len() <= 4
+                && candidate.parameters.iter().all(|ty| {
+                    ty == "&str" || (allowed_type(ty) && ty != "()" && ty != "&str")
+                })
+                && allowed_type(&candidate.result)
+                && candidate.result != "&str"
+        });
+    let matched = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    let parameters = matched
+        .parameters
+        .iter()
+        .map(|param| {
+            if param == "&str" {
+                "String"
+            } else {
+                param.as_str()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    Some(InferredGitSignature {
+        target_signature: format!("{target_alias}({parameters})->{}", matched.result),
+        source_parameters: matched.parameters,
+    })
+}
+
 pub(crate) fn infer_owned_string_target_signature(
     pinned_source: &str,
     upstream_symbol: &str,
@@ -367,11 +421,13 @@ fn allowed_type(value: &str) -> bool {
             | "u32"
             | "u64"
             | "u128"
+            | "usize"
             | "i8"
             | "i16"
             | "i32"
             | "i64"
             | "i128"
+            | "isize"
             | "f32"
             | "f64"
             | "bool"
@@ -555,6 +611,54 @@ impl Internal { pub fn method(s: &str) -> String { s.to_owned() } }
         assert!(
             infer_owned_string_target_signature(source, "deunicode", "unsafe::target").is_none()
         );
+    }
+
+    #[test]
+    fn identifies_mixed_primitive_and_borrowed_string_calls_without_semantic_guessing() {
+        let src = r#"
+pub fn distance(a: &str, b: &str) -> usize { a.len() + b.len() }
+pub fn limit(input: &str, max: usize, strict: bool) -> bool { input.len() < max && strict }
+pub fn shift(n: u32, delta: i32) -> i64 { n as i64 + delta as i64 }
+pub fn consume(value: String) -> String { value }
+pub fn nullary() -> bool { true }
+pub fn generic<T>(value: T) -> bool { true }
+pub async fn async_fn(value: usize) -> bool { true }
+struct Item;
+impl Item { pub fn method(value: usize) -> usize { value } }
+pub fn borrowed(value: &str) -> &str { value }
+"#;
+        let cases = [
+            ("distance", "text_distance(String,String)->usize"),
+            ("limit", "capped(String,usize,bool)->bool"),
+            ("shift", "shifted(u32,i32)->i64"),
+            ("consume", "consumed(String)->String"),
+            ("nullary", "no_args()->bool"),
+        ];
+        for (source, expected) in cases {
+            let target = match source {
+                "distance" => "text_distance",
+                "limit" => "capped",
+                "shift" => "shifted",
+                "consume" => "consumed",
+                _ => "no_args",
+            };
+            assert_eq!(
+                infer_typed_git_signature(src, source, target)
+                    .unwrap()
+                    .target_signature,
+                expected
+            );
+        }
+        assert_eq!(
+            infer_typed_git_signature(src, "limit", "capped")
+                .unwrap()
+                .source_parameters,
+            vec!["&str", "usize", "bool"]
+        );
+        for name in ["generic", "async_fn", "method", "borrowed", "missing"] {
+            assert!(infer_typed_git_signature(src, name, "target").is_none());
+        }
+        assert!(infer_typed_git_signature(src, "shift", "bad::alias").is_none());
     }
 
     #[test]
