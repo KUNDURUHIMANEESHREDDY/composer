@@ -37,7 +37,7 @@ Docker alone safely executes arbitrary malicious code**.
 
 ## Dependency and repair policy
 
-- Only direct Cargo dependencies expressed as version strings can be added.
+- Only direct registry Cargo dependencies expressed as version strings or bounded `{ version, features }` tables can be adopted. Requested literal features are unioned conservatively without replacing the target version. Git/path/renamed/workspace/dependency-policy configurations are rejected.
 - If the target already has a different string constraint, Composer retains
   it. After Docker resolves Cargo.lock, Composer checks the **selected locked
   version** against both semver requirements and rejects ambiguities.

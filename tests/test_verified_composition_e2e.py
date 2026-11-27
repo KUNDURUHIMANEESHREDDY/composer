@@ -145,6 +145,49 @@ def verify_nested_modules(root: Path, target: Path) -> None:
     ] == ["math::double=adapted_scale"]
     print("PASS compiler-verified API facade: source symbol adapted to target contract")
 
+    # Compiler infers only Into conversions; no lossy casts or source edits.
+    # u16 -> source u32 -> target u64 is infallible for primitive types.
+    target_signature = root / "target-nested-signature"
+    shutil.copytree(target, target_signature)
+    (target_signature / "tests").mkdir()
+    (target_signature / "tests/signature_contract.rs").write_text(
+        "use composed_target::adapted_scale;\n"
+        "#[test] fn target_signature_works() { "
+        "let value: u64 = adapted_scale(21_u16); "
+        "assert_eq!(value, 42_u64); }\n",
+        encoding="utf-8",
+    )
+    output_signature = root / "verified-nested-signature"
+    signature = json.loads(cli(
+        "verify-rust", str(capsule), str(target_signature),
+        "--output", str(output_signature), "--license-reviewed",
+        "--registry-cache", str(CARGO_CACHE),
+        "--api-signature", "math::double=adapted_scale(u16)->u64",
+    ))
+    assert signature["isolated_tests_passed"] is True
+    assert signature["verified_api_signatures"] == [
+        "math::double=adapted_scale(u16)->u64"
+    ]
+    generated = (output_signature / "src/lib.rs").read_text()
+    assert "pub fn adapted_scale(arg0: u16) -> u64" in generated
+    assert "let adapted_result: u64" in generated
+    assert (target_signature / "src/lib.rs").read_bytes() == original
+    assert json.loads((output_signature / "composer-build-evidence.json").read_text())[
+        "verified_api_signatures"
+    ] == ["math::double=adapted_scale(u16)->u64"]
+    print("PASS compiler-inferred API signature: u16 to u32 input, u32 to u64 output")
+
+    bad_signature = root / "must-reject-incompatible-signature"
+    cli(
+        "verify-rust", str(capsule), str(target),
+        "--output", str(bad_signature), "--license-reviewed",
+        "--registry-cache", str(CARGO_CACHE),
+        "--api-signature", "math::double=adapted_scale(String)->String",
+        expect_success=False,
+    )
+    assert not bad_signature.exists(), "Incompatible signature must not publish"
+    print("PASS incompatible source-to-target type conversion rejected")
+
     bad_api_output = root / "must-reject-unsafe-alias"
     cli(
         "verify-rust", str(capsule), str(target),
@@ -176,6 +219,67 @@ def verify_nested_modules(root: Path, target: Path) -> None:
     assert not rejected.exists(), "A failing nested test must not publish output"
     assert (target / "src/lib.rs").read_bytes() == original
     print("PASS multi-file rollback: failing nested test leaves no published output")
+
+
+def verify_cargo_dependency_features(root: Path, target: Path) -> None:
+    """Used, versioned serde/derive feature gets added without altering target version."""
+    source = root / "source-feature-flags"
+    make_repo(source, "feature_flags", """
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+pub struct Record { pub value: u32 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test] fn serializes() {
+        let x = Record { value: 42 };
+        let json = serde_json::to_string(&x).unwrap();
+        assert_eq!(serde_json::from_str::<Record>(&json).unwrap(), x);
+    }
+}
+""", 'serde = { version = "1", features = ["derive"] }\nserde_json = "1"\n')
+    capsule = make_capsule(root, source, "Record", "serde-features")
+    target_copy = root / "target-feature-flags"
+    shutil.copytree(target, target_copy)
+    with (target_copy / "Cargo.toml").open("a", encoding="utf-8") as out:
+        out.write('serde = "1"\n')
+    original = (target_copy / "Cargo.toml").read_bytes()
+    output = root / "verified-features"
+    result = json.loads(cli(
+        "verify-rust", str(capsule), str(target_copy),
+        "--output", str(output), "--license-reviewed",
+        "--registry-cache", str(CARGO_CACHE),
+    ))
+    assert result["isolated_tests_passed"] is True
+    assert result["dependency_feature_changes"] == ["serde: enabled [derive]"]
+    assert "serde_json = 1" in result["new_dependencies"]
+    manifest = (output / "Cargo.toml").read_text()
+    assert "derive" in manifest
+    assert "serde" in manifest
+    assert (target_copy / "Cargo.toml").read_bytes() == original
+    assert json.loads((output / "composer-build-evidence.json").read_text())[
+        "dependency_feature_changes"
+    ] == ["serde: enabled [derive]"]
+    print("PASS Cargo feature compatibility: serde/derive adopted, target version retained")
+
+    # Refuse git/path/renamed dependencies even when they contain a version.
+    invalid = root / "source-unsafe-feature"
+    shutil.copytree(source, invalid)
+    manifest_path = invalid / "Cargo.toml"
+    manifest_path.write_text(manifest_path.read_text().replace(
+        'version = "1", features = ["derive"]',
+        'version = "1", git = "https://example.invalid/foreign"',
+    ), encoding="utf-8")
+    invalid_capsule = make_capsule(root, invalid, "Record", "unsafe-feature")
+    rejected = root / "must-reject-foreign-dependency"
+    cli(
+        "verify-rust", str(invalid_capsule), str(target_copy),
+        "--output", str(rejected), "--license-reviewed",
+        "--registry-cache", str(CARGO_CACHE),
+        expect_success=False,
+    )
+    assert not rejected.exists()
+    assert (target_copy / "Cargo.toml").read_bytes() == original
+    print("PASS git dependency rejected without target mutation or publication")
 
 
 def main() -> None:
@@ -257,6 +361,7 @@ mod tests { #[test] fn works() { assert_eq!(super::baseline(), 7); } }
         assert (target / "src/lib.rs").read_bytes() == original
         print("PASS all-or-nothing rollback: second-stage test failure rejects batch")
         verify_nested_modules(root, target)
+        verify_cargo_dependency_features(root, target)
 
 
 if __name__ == "__main__":

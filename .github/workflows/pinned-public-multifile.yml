@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feat/pinned-multifile-realworld-benchmark
+      - feat/compiler-gated-api-signatures-and-cargo-features
     paths:
       - .github/workflows/pinned-public-multifile.yml
       - tests/test_pinned_public_multifile.py

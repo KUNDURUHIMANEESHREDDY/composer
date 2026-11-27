@@ -1,6 +1,7 @@
 //! Independent Feature Capsule verification, dependency/license inventory,
 //! target compatibility analysis, and safe isolated integration staging.
 
+mod api_signature;
 mod apply;
 mod batch;
 mod compatibility;
