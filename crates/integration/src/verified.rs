@@ -27,7 +27,7 @@ fn validated_verifier_image(value: Option<&str>) -> Result<&'static str, Verifie
         None | Some("stable") => Ok(DEFAULT_IMAGE),
         Some("nightly-2026-11-25") => Ok(NIGHTLY_IMAGE),
         Some("stable-system-libs") => Ok(SYSTEM_LIBS_IMAGE),
-        Some("stable-gungraun-0.20.0") => Ok(GUNGRAUN_IMAGE),
+        Some("nightly-gungraun-0.20.0") => Ok(GUNGRAUN_IMAGE),
         Some("nightly-rustc-dev-2026-11-25") => Ok(RUSTC_DEV_IMAGE),
         _ => Err(VerifiedRustError::Unsafe(
             "unsupported COMPOSER_VERIFIER_TOOLCHAIN".into(),
@@ -61,7 +61,7 @@ fn verifier_toolchain_is_allowlisted() {
         SYSTEM_LIBS_IMAGE
     );
     assert_eq!(
-        validated_verifier_image(Some("stable-gungraun-0.20.0")).unwrap(),
+        validated_verifier_image(Some("nightly-gungraun-0.20.0")).unwrap(),
         GUNGRAUN_IMAGE
     );
     assert_eq!(
@@ -1272,6 +1272,34 @@ pub(crate) fn selected_verifier_features() -> Result<bool, VerifiedRustError> {
     }
 }
 
+fn validated_verifier_pids(input: Option<&str>) -> Result<u32, VerifiedRustError> {
+    match input {
+        None | Some("64") => Ok(64),
+        Some("1536") => Ok(1536),
+        _ => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_PIDS; only 64 or 1536 permitted".into(),
+        )),
+    }
+}
+
+pub(crate) fn selected_verifier_pids() -> Result<u32, VerifiedRustError> {
+    match std::env::var("COMPOSER_VERIFIER_PIDS") {
+        Ok(value) => validated_verifier_pids(Some(&value)),
+        Err(std::env::VarError::NotPresent) => validated_verifier_pids(None),
+        Err(_) => Err(VerifiedRustError::Unsafe(
+            "COMPOSER_VERIFIER_PIDS must be UTF-8".into(),
+        )),
+    }
+}
+
+#[test]
+fn verifier_pid_profile_is_bounded() {
+    assert_eq!(validated_verifier_pids(None).unwrap(), 64);
+    assert_eq!(validated_verifier_pids(Some("1536")).unwrap(), 1536);
+    assert!(validated_verifier_pids(Some("unlimited")).is_err());
+    assert!(validated_verifier_pids(Some("5000")).is_err());
+}
+
 fn validated_verifier_cpus(input: Option<&str>) -> Result<u32, VerifiedRustError> {
     match input {
         None | Some("1") => Ok(1),
@@ -1403,6 +1431,7 @@ fn docker_build_internal(
     let memory_mb = selected_verifier_memory_mb()?;
     let memory_limit = format!("--memory={memory_mb}m");
     let cpu_limit = format!("--cpus={}", selected_verifier_cpus()?);
+    let pids_limit = format!("--pids-limit={}", selected_verifier_pids()?);
     let rustflags_arg = format!("--env=RUSTFLAGS={}", selected_verifier_rustflags()?);
     let work_tmpfs = format!("--tmpfs=/work:rw,nosuid,nodev,exec,mode=1777,size={memory_mb}m");
     let name = format!("composer-verify-{}", Uuid::new_v4().simple());
@@ -1419,7 +1448,7 @@ fn docker_build_internal(
         "--read-only",
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
-        "--pids-limit=64",
+        &pids_limit,
         &memory_limit,
         &cpu_limit,
         "--user",

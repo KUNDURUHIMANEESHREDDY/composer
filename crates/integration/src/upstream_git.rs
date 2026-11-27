@@ -25,6 +25,124 @@ use crate::{
 
 const GIT_EVIDENCE: &str = "composer-upstream-git-evidence.json";
 
+const RUSTLS_PUBLIC_FIXTURE_COMMIT: &str = "bd95fd9bdfe9d6e42b62d38e9e6ef38ac0f10608";
+const RUSTLS_PUBLIC_FIXTURE_TREE: &str = "b42c258742023dde0c447979ee72349f92c2006c";
+
+/// Allow only the already-public test CA fixtures of the exact frozen Rustls
+/// repository. These keys are public upstream test fixtures, not credentials.
+/// No new untracked or modified data can be copied from a user's machine.
+fn copy_pinned_rustls_test_ca(
+    original: &Path,
+    staged: &Path,
+) -> Result<&'static str, VerifiedRustError> {
+    let git = |args: &[&str]| -> Result<std::process::Output, VerifiedRustError> {
+        let result = Command::new("git")
+            .arg("-C")
+            .arg(original)
+            .args(args)
+            .output()?;
+        if !result.status.success() {
+            return Err(VerifiedRustError::Unsafe(
+                "pinned Rustls test fixtures failed Git verification".into(),
+            ));
+        }
+        Ok(result)
+    };
+    let head = git(&["rev-parse", "HEAD"])?;
+    if String::from_utf8_lossy(&head.stdout).trim() != RUSTLS_PUBLIC_FIXTURE_COMMIT {
+        return Err(VerifiedRustError::Unsafe(
+            "Rustls fixture import requires its exact frozen Git commit".into(),
+        ));
+    }
+    let tree = git(&["rev-parse", "HEAD:test-ca"])?;
+    if String::from_utf8_lossy(&tree.stdout).trim() != RUSTLS_PUBLIC_FIXTURE_TREE {
+        return Err(VerifiedRustError::Unsafe(
+            "Rustls test CA tree differs from reviewed public Git objects".into(),
+        ));
+    }
+    let changed = git(&[
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--",
+        "test-ca",
+    ])?;
+    if !changed.stdout.is_empty() {
+        return Err(VerifiedRustError::Unsafe(
+            "modified or untracked test CA files are not allowed".into(),
+        ));
+    }
+    let source_dir = original.join("test-ca");
+    let source_meta = fs::symlink_metadata(&source_dir)?;
+    if !source_meta.is_dir() || source_meta.file_type().is_symlink() {
+        return Err(VerifiedRustError::Unsafe(
+            "Rustls test CA root is unsafe".into(),
+        ));
+    }
+    let canonical_dir = source_dir.canonicalize()?;
+    let entries = git(&["ls-tree", "-r", "-z", "HEAD", "--", "test-ca"])?;
+    let mut count = 0_usize;
+    let mut total = 0_u64;
+    for entry in entries
+        .stdout
+        .split(|&byte| byte == 0)
+        .filter(|entry| !entry.is_empty())
+    {
+        let record = std::str::from_utf8(entry)
+            .map_err(|_| VerifiedRustError::Unsafe("non-UTF8 Rustls fixture path".into()))?;
+        let (object, path) = record
+            .split_once('\t')
+            .ok_or_else(|| VerifiedRustError::Unsafe("invalid Git fixture tree record".into()))?;
+        if !object.starts_with("100644 blob ") {
+            return Err(VerifiedRustError::Unsafe(
+                "symlink or executable in reviewed Rustls fixture tree".into(),
+            ));
+        }
+        let relative = Path::new(path);
+        if relative
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+            || !path.starts_with("test-ca/")
+            || !matches!(
+                relative.extension().and_then(|ext| ext.to_str()),
+                Some("cert" | "chain" | "der" | "fullchain" | "key" | "md" | "pem")
+            )
+        {
+            return Err(VerifiedRustError::Unsafe(
+                "unexpected test CA fixture path or file extension".into(),
+            ));
+        }
+        let source = original.join(relative);
+        let meta = fs::symlink_metadata(&source)?;
+        if !meta.is_file()
+            || meta.file_type().is_symlink()
+            || !source.canonicalize()?.starts_with(&canonical_dir)
+        {
+            return Err(VerifiedRustError::Unsafe(
+                "Rustls public fixture is no longer a regular tracked file".into(),
+            ));
+        }
+        count += 1;
+        total += meta.len();
+        if count > 200 || total > 512 * 1024 {
+            return Err(VerifiedRustError::Unsafe(
+                "public test CA fixture count or total size exceeded".into(),
+            ));
+        }
+        let destination = staged.join(relative);
+        fs::create_dir_all(destination.parent().ok_or_else(|| {
+            VerifiedRustError::Unsafe("Rustls fixture destination missing parent".into())
+        })?)?;
+        fs::copy(source, destination)?;
+    }
+    if count < 100 {
+        return Err(VerifiedRustError::Unsafe(
+            "reviewed Rustls test CA fixture set was incomplete".into(),
+        ));
+    }
+    Ok(RUSTLS_PUBLIC_FIXTURE_TREE)
+}
+
 #[derive(Debug, Clone)]
 pub struct UpstreamGitOptions {
     pub target_root: PathBuf,
@@ -701,6 +819,15 @@ pub fn verify_upstream_git(
             &workspace_dirs,
             virtual_member.is_some(),
         )?;
+        let public_test_fixture_tree = if virtual_member
+            .as_ref()
+            .is_some_and(|p| p == Path::new("rustls"))
+            && selected_package.as_deref() == Some("rustls")
+        {
+            Some(copy_pinned_rustls_test_ca(&original, &staged)?)
+        } else {
+            None
+        };
         let target_staged_dir = virtual_member
             .as_ref()
             .map_or_else(|| staged.clone(), |member| staged.join(member));
@@ -770,6 +897,7 @@ pub fn verify_upstream_git(
             "network_disabled": true,
             "docker_memory_limit_mb": crate::verified::selected_verifier_memory_mb()?,
             "docker_cpu_limit": crate::verified::selected_verifier_cpus()?,
+            "docker_pids_limit": crate::verified::selected_verifier_pids()?,
             "docker_all_features": crate::verified::selected_verifier_features()?,
             "docker_rustflags_profile": crate::verified::selected_verifier_rustflags_profile()?,
             "cargo_workspace_root_package": cargo.get("workspace").is_some(),
@@ -777,6 +905,7 @@ pub fn verify_upstream_git(
             "target_member_dir": options.target_member_dir,
             "target_member_package": selected_package,
             "root_virtual_workspace": virtual_member.is_some(),
+            "reviewed_public_test_fixture_tree_oid": public_test_fixture_tree,
             "verification_scope": if virtual_member.is_some() { "selected_workspace_member_all_targets" } else if options.contract_focused { "library_and_integration_tests" } else { "all_targets" },
             "third_party_benchmarks_verified": !options.contract_focused,
             "docker_image_id": image_id,

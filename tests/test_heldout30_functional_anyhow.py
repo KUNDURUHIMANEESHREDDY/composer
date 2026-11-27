@@ -169,7 +169,7 @@ def main():
     images = {
         "nightly-2026-11-25": "docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab",
         "stable-system-libs": "docker.io/library/rust@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07",
-        "stable-gungraun-0.20.0": "composer-verifier-gungraun:0.20.0",
+        "nightly-gungraun-0.20.0": "composer-verifier-gungraun:0.20.0",
         "nightly-rustc-dev-2026-11-25": "composer-verifier-rustc-dev:nightly-2026-11-25",
     }
     image = images.get(os.getenv("COMPOSER_VERIFIER_TOOLCHAIN"), "rust:1.99-slim")
@@ -220,6 +220,7 @@ def main():
             assert evidence["network_disabled"] and evidence["offline_tests_passed"]
             assert evidence["docker_image_reference"] == image
             assert evidence["docker_cpu_limit"] == int(os.getenv("COMPOSER_VERIFIER_CPUS", "1"))
+            assert evidence["docker_pids_limit"] == int(os.getenv("COMPOSER_VERIFIER_PIDS", "64"))
             assert evidence["docker_all_features"] is (os.getenv("COMPOSER_VERIFIER_FEATURES", "default") == "all")
             assert evidence["docker_rustflags_profile"] == os.getenv("COMPOSER_VERIFIER_RUSTFLAGS_PROFILE", "default")
             assert evidence["cargo_workspace_root_package"] is EXPECT_WORKSPACE
@@ -227,6 +228,10 @@ def main():
             assert evidence["root_virtual_workspace"] is bool(TARGET_MEMBER_DIR)
             assert evidence["target_member_dir"] == TARGET_MEMBER_DIR
             assert evidence["target_member_package"] == TARGET_MEMBER_PACKAGE
+            assert evidence["reviewed_public_test_fixture_tree_oid"] == (
+                "b42c258742023dde0c447979ee72349f92c2006c"
+                if TARGET == "rustls/rustls" else None
+            )
             assert evidence["verification_scope"] == expected_scope
             assert evidence["docker_memory_limit_mb"] == int(os.getenv("COMPOSER_VERIFIER_MEMORY_MB", "1024"))
             assert evidence["third_party_benchmarks_verified"] is (not CONTRACT_FOCUSED)

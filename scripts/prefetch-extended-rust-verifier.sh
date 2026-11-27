@@ -4,7 +4,7 @@ set -euo pipefail
 # prebuilt runner images; Docker verification still uses --pull=never and
 # --network=none with an image content ID and the same sandbox restrictions.
 case "${1:-}" in
-  stable-gungraun-0.20.0)
+  nightly-gungraun-0.20.0)
     dockerfile=scripts/Dockerfile.gungraun-verifier
     tag=composer-verifier-gungraun:0.20.0
     ;;
