@@ -52,6 +52,37 @@ pub fn ported_jaro(arg0: String, arg1: String) -> f64 {
 
 It never implements Jaro internally. `tests/test_pinned_git_numeric_api_inference.py` checks three independent transfers into unrelated `ijt/trigram`, including coexistence with an older dependency version. A type-compatible but semantically different upstream `jaro_winkler` must fail target-owned Jaro assertions. Generic source APIs and missing adapters must also fail without publication. Static type inference cannot determine whether `jaro` is the intended behavior: the source name, reviewed Git commit, license, and expected behaviors remain caller-supplied.
 
+## Step 1: broader compiler-verified typed API inference
+
+Composer reuses its existing **Tree-sitter Rust parser**, Cargo's pinned Git dependency resolver, and the Rust compiler; it does not invent a Rust parser or rewrite upstream algorithms. A single reviewed public top-level source function can now be adapted when its inputs consist of concrete scalar/boolean/char types, owned `String`, and immutable borrowed `&str` in any supported combination (maximum four parameters), with a supported scalar, `String`, or unit result. The only value conversion Composer writes is target-owned `String.as_str()` for an upstream `&str`; all other arguments pass through unchanged without casts. A no-argument source function is also supported.
+
+For example, the unmodified third-party Git implementation `rapidfuzz/strsim-rs` exports `levenshtein(&str, &str) -> usize`. The existing command accepts `--infer-typed-signature` as a readable alias for the original `--infer-owned-string-signature`, and automatically produces this source-checked wrapper:
+
+```rust
+pub fn ported_levenshtein(arg0: String, arg1: String) -> usize {
+    composer_git_strsim::levenshtein(arg0.as_str(), arg1.as_str())
+}
+```
+
+The independently authored target contract must still compare observed distances with known expectations. The CI benchmark tests the `usize` adapter three times on the unrelated pinned `ijt/trigram` target and separately checks that the same-signature but semantically different `osa_distance` implementation is **refused**, with no publication or modification to the original target. Existing `f64` Jaro and transliteration imports must remain green.
+
+**Boundary:** This is automatic **type-shape inference**, not unrestricted cross-project semantic understanding. Callers still select a reviewed Git repo/commit, source function and target alias, review the license and supply an independent behavioral contract. Arbitrary generics, references in return types, traits, impl methods, user-defined types, modules, macros and automatic meaning-preserving cross-language rewrites are not asserted. The integration fails closed on unsupported signatures; manual reviewed integrations remain available. The types are drawn from bounded, clean pinned Git source and then checked by actual Cargo compilation in the restricted offline verifier.
+
+## Step 2: behavior-verified choice among reviewed Git functions
+
+**Source-symbol discovery is a different question from semantics.** Composer can now choose **one** implementation out of 2–5 explicitly reviewed public symbols from the **same** clean SHA-pinned Git checkout. The CLI uses the existing `verify-external-git-rust --infer-typed-signature` path with additional `--alternative-public-symbol` arguments:
+
+```text
+--public-symbol osa_distance
+--alternative-public-symbol levenshtein
+--target-alias ported_levenshtein
+--infer-typed-signature
+```
+
+Composer does **not** claim that AST signatures or names prove meaning. Each candidate runs through the exact existing Cargo resolver and independent target-owned tests, separately in temporary output directories. The requested output is published only if **exactly one** candidate passes. Zero verified candidates and multiple passing candidates both fail closed. This also prevents a weak behavior test from silently selecting one of two equivalent-looking implementations.
+
+The repeated real Git benchmark exercises upstream `strsim::osa_distance` versus `strsim::levenshtein` (both `(&str,&str)->usize`), into the independent `ijt/trigram` target. Target assertions on transposed strings reject OSA while accepting Levenshtein. Additional negative cases use deliberately weak all-equal-input assertions (both candidates pass) and wrong candidates (neither passes); **both must refuse publication**. The algorithms are reused unchanged from the third-party upstream. This is **bounded test-based semantic selection, not unrestricted semantic equivalence**: callers must still choose reviewed alternatives and write sufficiently discriminating independent behavior contracts. Ambiguity is a valid safety outcome, not a missing check.
+
 ## Proof and limits
 
 `tests/test_pinned_git_string_adapter_public.py` now requires three independently tested deunicode-to-slugify Git transfers with the **inferred** String adapter. Wrong-but-compiling semantics, missing adaptation, unsafe explicit signatures, Git SHA mismatches, and unsupported inference must all fail without output. This is **not** semantic inference, open-ended automatic repository/API discovery, or verification of all possible behaviors. Support for optional lifetimes, generic trait APIs, borrowed return values, and arbitrary conversions requires separate reviewed upstream capabilities and benchmarks.
