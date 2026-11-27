@@ -112,12 +112,25 @@ pub(crate) fn validate_contract_test(
                 "autotests=false requires an exact, runnable explicit [[test]] registration".into(),
             ));
         }
-    } else if cargo.get("test").is_some() {
-        // For automatically discovered targets, explicit overrides could
-        // redirect or suppress the contract and need independent review.
-        return Err(VerifiedRustError::Unsafe(
-            "explicit Cargo [[test]] configuration requires independent test-runner review".into(),
-        ));
+    } else if let Some(configured) = cargo.get("test") {
+        // With automatic test discovery enabled, existing unrelated [[test]]
+        // entries (often feature-gated upstream integration tests) do not
+        // replace our independently named tests/<contract>.rs. Reject any
+        // collision by either name or path; otherwise preserve the target's
+        // existing test configuration and require Docker cargo test success.
+        let entries = configured.as_array().ok_or_else(|| {
+            VerifiedRustError::Unsafe("Cargo [[test]] declarations are malformed".into())
+        })?;
+        let contract_name = test.file_stem().and_then(|s| s.to_str());
+        let contract_path = test.to_str().map(|s| s.replace('\\', "/"));
+        if entries.iter().any(|entry| {
+            entry.get("name").and_then(toml::Value::as_str) == contract_name
+                || entry.get("path").and_then(toml::Value::as_str) == contract_path.as_deref()
+        }) {
+            return Err(VerifiedRustError::Unsafe(
+                "an explicit Cargo [[test]] target collides with the independent contract".into(),
+            ));
+        }
     }
     let test_dir = target.join("tests");
     let dir = fs::symlink_metadata(&test_dir)?;
@@ -568,10 +581,27 @@ mod tests {
             );
         }
         fs::write(root.join("Cargo.toml"), original_manifest.clone()).unwrap();
+        // Existing upstream [[test]] entries must not mask the new
+        // automatically discovered contract, but unrelated tests are safe.
+        for unrelated in [
+            "[[test]]\nname='upstream'\npath='tests/upstream.rs'\n",
+            "[[test]]\nname='upstream'\npath='tests/upstream.rs'\nrequired-features=['full']\n",
+        ] {
+            fs::write(
+                root.join("Cargo.toml"),
+                format!("{original_manifest}{unrelated}"),
+            )
+            .unwrap();
+            assert!(
+                validate_contract_test(&root, Path::new("tests/contract.rs"), "wanted").is_ok(),
+                "unrelated upstream test must not block independent contract: {unrelated}"
+            );
+        }
         for explicit in [
             "[[test]]\nname='contract'\npath='tests/contract.rs'\nharness=false\n",
             "[[test]]\nname='contract'\npath='tests/contract.rs'\nrequired-features=['optional']\n",
-            "[[test]]\nname='unrelated'\npath='tests/unrelated.rs'\n",
+            "[[test]]\nname='contract'\npath='tests/other.rs'\n",
+            "[[test]]\nname='unrelated'\npath='tests/contract.rs'\n",
         ] {
             fs::write(
                 root.join("Cargo.toml"),
