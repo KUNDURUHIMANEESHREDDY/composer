@@ -1019,7 +1019,15 @@ pub(crate) fn docker_build(
     image_id: &str,
     container_user: &str,
 ) -> Result<String, VerifiedRustError> {
-    docker_build_internal(staged, results, registry, None, image_id, container_user)
+    docker_build_internal(
+        staged,
+        results,
+        registry,
+        None,
+        image_id,
+        container_user,
+        false,
+    )
 }
 
 /// Reuse the same restricted Docker pipeline for pinned Cargo Git dependencies.
@@ -1032,6 +1040,7 @@ pub(crate) fn docker_build_with_git_cache(
     git_cache: &Path,
     image_id: &str,
     container_user: &str,
+    contract_focused: bool,
 ) -> Result<String, VerifiedRustError> {
     docker_build_internal(
         staged,
@@ -1040,6 +1049,7 @@ pub(crate) fn docker_build_with_git_cache(
         Some(git_cache),
         image_id,
         container_user,
+        contract_focused,
     )
 }
 
@@ -1074,11 +1084,21 @@ fn docker_build_internal(
     git_cache: Option<&Path>,
     image_id: &str,
     container_user: &str,
+    contract_focused: bool,
 ) -> Result<String, VerifiedRustError> {
     // A requested gVisor runtime is mandatory, never best-effort.
     let requested_runtime = selected_verifier_runtime()?;
-    // No shell expansion from user input: a fixed script with process arguments.
-    const SCRIPT: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
+    // Fixed, compiler-owned scripts. Explicitly opt in to testing only library
+    // and independent integration contracts when third-party benchmark targets
+    // cannot run in the pinned stable-Rust, resource-bounded verifier. Default
+    // remains all-targets; do not silently downgrade failed verification.
+    const SCRIPT_ALL: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
+    const SCRIPT_CONTRACT: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --lib --tests >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --lib --tests; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
+    let script = if contract_focused {
+        SCRIPT_CONTRACT
+    } else {
+        SCRIPT_ALL
+    };
     let name = format!("composer-verify-{}", Uuid::new_v4().simple());
     let mut cmd = Command::new("docker");
     cmd.args([
@@ -1158,7 +1178,7 @@ fn docker_build_internal(
         cmd.arg("--mount")
             .arg(mount_arg(&path, "/tmp/cargo/git", true)?);
     }
-    cmd.args(["--entrypoint", "sh", image_id, "-c", SCRIPT]);
+    cmd.args(["--entrypoint", "sh", image_id, "-c", script]);
     let launched = cmd
         .output()
         .map_err(|err| VerifiedRustError::Docker(format!("Docker CLI unavailable: {err}")))?;

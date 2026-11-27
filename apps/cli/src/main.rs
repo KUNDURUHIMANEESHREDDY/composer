@@ -233,6 +233,14 @@ enum Command {
         /// Assert independent license/source review; not legal clearance.
         #[arg(long)]
         license_reviewed: bool,
+        /// Optional exact trusted OpenPGP signer fingerprint. Reject unsigned
+        /// or untrusted commits, using the existing git verify-commit command.
+        #[arg(long)]
+        require_upstream_signer_fingerprint: Option<String>,
+        /// Explicitly run library + integration tests, excluding external
+        /// benchmarks and binary targets. Full all-targets remains default.
+        #[arg(long)]
+        contract_focused: bool,
     },
     /// Discover independent existing Rust capabilities via Cargo search/info
     /// and Composer's existing Rust analyzer. Read-only, no upstream code execution.
@@ -502,6 +510,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             registry_cache,
             git_cache,
             license_reviewed,
+            require_upstream_signer_fingerprint,
+            contract_focused,
         } => {
             let result = verify_upstream_git(&UpstreamGitOptions {
                 target_root: target,
@@ -518,6 +528,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 registry_cache,
                 git_cache,
                 license_reviewed,
+                required_signer_fingerprint: require_upstream_signer_fingerprint,
+                contract_focused,
             })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }

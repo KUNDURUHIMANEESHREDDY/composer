@@ -49,6 +49,12 @@ pub struct UpstreamGitOptions {
     /// Cargo's pre-fetched git/ directory only (never entire Cargo home).
     pub git_cache: PathBuf,
     pub license_reviewed: bool,
+    /// Optional trusted OpenPGP signer fingerprint (40 or 64 hex).
+    /// Requiring it rejects unsigned or untrusted upstream commits.
+    pub required_signer_fingerprint: Option<String>,
+    /// Explicitly test all library and integration tests, excluding third-party
+    /// benchmarks/examples/binaries. Never automatically lower verification.
+    pub contract_focused: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,8 +70,19 @@ pub struct UpstreamGitResult {
     pub lockfile_git_commit_verified: bool,
     pub source_checkout_commit_verified: bool,
     pub source_license_sha256: String,
+    /// Immutable Git tree object of the independently reviewed upstream commit.
+    pub reviewed_source_tree_oid: String,
+    /// Blob object ID independently checked against the clean checkout.
+    pub reviewed_manifest_blob_oid: String,
+    pub reviewed_license_blob_oid: String,
+    pub source_git_objects_verified: bool,
+    /// True only when an explicitly required signature was verified by Git.
+    pub source_commit_signature_verified: bool,
+    pub verified_signer_fingerprint: Option<String>,
     pub original_target_unchanged: bool,
     pub offline_tests_passed: bool,
+    /// Explicit verification scope; not equivalent to passing --all-targets.
+    pub verification_scope: String,
     pub evidence_path: PathBuf,
     pub elapsed_seconds: f64,
 }
@@ -117,6 +134,7 @@ fn git_read(path: &Path, args: &[&str]) -> Result<String, VerifiedRustError> {
             "-c",
             "core.untrackedCache=false",
         ])
+        .args(["-c", "gpg.program=gpg"])
         .args(args)
         // Third-party Git metadata must not inherit operator-global filter
         // commands or environment-injected Git configuration.
@@ -163,12 +181,73 @@ fn reject_host_git_filter_commands(checkout: &Path) -> Result<(), VerifiedRustEr
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+struct ReviewedSourceEvidence {
+    license_bytes: Vec<u8>,
+    license_sha256: String,
+    tree_oid: String,
+    manifest_blob_oid: String,
+    license_blob_oid: String,
+    license_path: String,
+}
+
+fn tracked_blob_matches(
+    checkout: &Path,
+    revision: &str,
+    relative_path: &str,
+) -> Result<String, VerifiedRustError> {
+    // Do not accept a path whose checkout bytes differ from the Git tree.
+    // Git (not custom hash logic) computes and verifies the stored blob ID.
+    let git_path = format!("{revision}:{relative_path}");
+    let expected = git_read(checkout, &["rev-parse", "--verify", &git_path])?;
+    let actual = git_read(
+        checkout,
+        &["hash-object", "--no-filters", "--", relative_path],
+    )?;
+    if expected.len() != 40
+        || expected != actual
+        || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(VerifiedRustError::Unsafe(format!(
+            "reviewed source file {relative_path} differs from the pinned Git object"
+        )));
+    }
+    Ok(expected)
+}
+
+fn verify_trusted_upstream_signer(
+    checkout: &Path,
+    expected: &str,
+) -> Result<String, VerifiedRustError> {
+    // Reuse installed Git and the user's trusted OpenPGP keyring; no custom
+    // signature verifier. Never accept unsigned or unknown-trust signatures.
+    if !matches!(expected.len(), 40 | 64) || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(VerifiedRustError::Unsafe(
+            "required upstream signer fingerprint must be 40 or 64 hex characters".into(),
+        ));
+    }
+    git_read(checkout, &["verify-commit", "HEAD"]).map_err(|_| {
+        VerifiedRustError::Unsafe(
+            "upstream commit signature verification failed or signing key unavailable".into(),
+        )
+    })?;
+    let trust = git_read(checkout, &["log", "-1", "--format=%G?", "HEAD"])?;
+    let actual = git_read(checkout, &["log", "-1", "--format=%GF", "HEAD"])?;
+    if trust != "G" || !actual.eq_ignore_ascii_case(expected) {
+        return Err(VerifiedRustError::Unsafe(
+            "upstream signing fingerprint does not match a trusted valid Git signature".into(),
+        ));
+    }
+    Ok(actual.to_ascii_uppercase())
+}
+
 fn checkout_license(
     checkout: &Path,
     package: &str,
     repo: &GitHubRepository,
     rev: &str,
-) -> Result<(Vec<u8>, String), VerifiedRustError> {
+) -> Result<ReviewedSourceEvidence, VerifiedRustError> {
     let meta = fs::symlink_metadata(checkout)?;
     if !meta.is_dir() || meta.file_type().is_symlink() {
         return Err(VerifiedRustError::Unsafe(
@@ -219,16 +298,23 @@ fn checkout_license(
         .and_then(|table| table.get("name"))
         .and_then(toml::Value::as_str)
         != Some(package)
-        || cargo
-            .get("package")
-            .and_then(|table| table.get("license"))
-            .and_then(toml::Value::as_str)
-            .is_none_or(str::is_empty)
     {
         return Err(VerifiedRustError::Unsafe(
-            "source checkout package/license metadata not confirmed".into(),
+            "source checkout package name does not match reviewed source".into(),
         ));
     }
+    // Check the actual on-disk manifest against the immutable Git object,
+    // not only the ref name and worktree "clean" status.
+    let tree_oid = git_read(checkout, &["rev-parse", "--verify", "HEAD^{tree}"])?;
+    if tree_oid.len() != 40 || !tree_oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(VerifiedRustError::Unsafe(
+            "invalid upstream Git tree object".into(),
+        ));
+    }
+    let manifest_blob_oid = tracked_blob_matches(checkout, rev, "Cargo.toml")?;
+    // Unpublished Git-only libraries often supply a LICENSE file without
+    // declaring the license in Cargo.toml. Keep the explicit review gate and
+    // hash/copy the committed LICENSE file rather than inventing a declaration.
     for name in [
         "LICENSE",
         "LICENSE-MIT",
@@ -251,7 +337,15 @@ fn checkout_license(
         }
         let bytes = fs::read(&file)?;
         let checksum = format!("{:x}", Sha256::digest(&bytes));
-        return Ok((bytes, checksum));
+        let license_blob_oid = tracked_blob_matches(checkout, rev, name)?;
+        return Ok(ReviewedSourceEvidence {
+            license_bytes: bytes,
+            license_sha256: checksum,
+            tree_oid,
+            manifest_blob_oid,
+            license_blob_oid,
+            license_path: name.to_owned(),
+        });
     }
     Err(VerifiedRustError::Unsafe(
         "source checkout has no regular license evidence file".into(),
@@ -334,8 +428,7 @@ pub fn verify_upstream_git(
     }
     // Checkout is verified clean, at the exact requested commit and public
     // upstream origin BEFORE its source code can influence API inference.
-    let (license, license_sha) =
-        checkout_license(&options.upstream_checkout, &options.package, &repo, rev)?;
+    let reviewed = checkout_license(&options.upstream_checkout, &options.package, &repo, rev)?;
     let effective_signature = if options.infer_owned_string_signature {
         let lib = options.upstream_checkout.join("src/lib.rs");
         let meta = fs::symlink_metadata(&lib)?;
@@ -361,6 +454,11 @@ pub fn verify_upstream_git(
         &options.target_alias,
         effective_signature.as_deref(),
     )?;
+    let signer = options
+        .required_signer_fingerprint
+        .as_deref()
+        .map(|fingerprint| verify_trusted_upstream_signer(&options.upstream_checkout, fingerprint))
+        .transpose()?;
     let original = options.target_root.canonicalize()?;
     validate_contract_test(&original, &options.contract_test, &options.target_alias)?;
     let target_manifest = original.join("Cargo.toml");
@@ -466,6 +564,7 @@ pub fn verify_upstream_git(
             &options.git_cache,
             &image_id,
             &container_user,
+            options.contract_focused,
         )?;
         let elapsed = start.elapsed().as_secs_f64();
         let source = validate_git_lock(&results.join("Cargo.lock"), &options.package, &repo, rev)?;
@@ -473,7 +572,7 @@ pub fn verify_upstream_git(
         let licenses = staged.join("third_party_licenses");
         fs::create_dir_all(&licenses)?;
         let notice = format!("{}-git-license.txt", options.package);
-        fs::write(licenses.join(&notice), &license)?;
+        fs::write(licenses.join(&notice), &reviewed.license_bytes)?;
         let evidence = serde_json::json!({
             "schema_version": 1,
             "mode": "reuse_pinned_git_dependency",
@@ -482,8 +581,15 @@ pub fn verify_upstream_git(
             "lockfile_source": source,
             "source_checkout_commit_verified": true,
             "cargo_lock_commit_verified": true,
-            "license_sha256": license_sha,
+            "license_sha256": reviewed.license_sha256,
             "license_notice": format!("third_party_licenses/{notice}"),
+            "reviewed_license_source_path": reviewed.license_path,
+            "reviewed_source_tree_oid": reviewed.tree_oid,
+            "reviewed_manifest_blob_oid": reviewed.manifest_blob_oid,
+            "reviewed_license_blob_oid": reviewed.license_blob_oid,
+            "source_git_objects_verified": true,
+            "source_commit_signature_verified": signer.is_some(),
+            "verified_signer_fingerprint": signer,
             "review_attested": true,
             "target_contract": options.contract_test,
             "public_symbol": options.public_symbol,
@@ -493,6 +599,8 @@ pub fn verify_upstream_git(
             "adapter_kind": if typed_bridge.is_some() { "borrow_owned_strings_as_str" } else { "direct_reexport" },
             "offline_tests_passed": true,
             "network_disabled": true,
+            "verification_scope": if options.contract_focused { "library_and_integration_tests" } else { "all_targets" },
+            "third_party_benchmarks_verified": !options.contract_focused,
             "docker_image_id": image_id,
             "original_target_unchanged": true,
             "elapsed_seconds": elapsed,
@@ -515,9 +623,20 @@ pub fn verify_upstream_git(
             upstream_commit: rev.clone(),
             lockfile_git_commit_verified: true,
             source_checkout_commit_verified: true,
-            source_license_sha256: license_sha.clone(),
+            source_license_sha256: reviewed.license_sha256.clone(),
+            reviewed_source_tree_oid: reviewed.tree_oid.clone(),
+            reviewed_manifest_blob_oid: reviewed.manifest_blob_oid.clone(),
+            reviewed_license_blob_oid: reviewed.license_blob_oid.clone(),
+            source_git_objects_verified: true,
+            source_commit_signature_verified: signer.is_some(),
+            verified_signer_fingerprint: signer.clone(),
             original_target_unchanged: true,
             offline_tests_passed: true,
+            verification_scope: if options.contract_focused {
+                "library_and_integration_tests".into()
+            } else {
+                "all_targets".into()
+            },
             evidence_path: output.join(GIT_EVIDENCE),
             elapsed_seconds: elapsed,
         })
@@ -555,6 +674,8 @@ mod tests {
             registry_cache: PathBuf::from("missing-registry"),
             git_cache: PathBuf::from("missing-git"),
             license_reviewed: false,
+            required_signer_fingerprint: None,
+            contract_focused: false,
         };
         assert!(matches!(
             verify_upstream_git(&opts),
