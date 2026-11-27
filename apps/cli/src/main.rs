@@ -430,8 +430,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
             license_reviewed,
         } => {
             let metadata = fs::symlink_metadata(&candidates_json)?;
-            if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 64 * 1024 {
-                return Err("candidate list must be a regular JSON file no larger than 64 KiB".into());
+            if !metadata.is_file()
+                || metadata.file_type().is_symlink()
+                || metadata.len() > 64 * 1024
+            {
+                return Err(
+                    "candidate list must be a regular JSON file no larger than 64 KiB".into(),
+                );
             }
             let candidates: Vec<UpstreamRecoveryCandidate> =
                 serde_json::from_slice(&fs::read(candidates_json)?)?;
