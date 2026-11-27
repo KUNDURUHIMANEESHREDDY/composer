@@ -30,6 +30,8 @@ pub struct VerifiedRustOptions {
     pub license_reviewed: bool,
     /// Optional path containing ONLY Cargo's public registry source/cache/index.
     pub registry_cache: Option<PathBuf>,
+    /// Optional explicit compiler-verified source_path=target_name API exports.
+    pub api_aliases: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +40,7 @@ pub struct VerifiedRustResult {
     pub capsule_id: String,
     pub new_dependencies: Vec<String>,
     pub compatible_constraints_retained: Vec<String>,
+    pub verified_api_aliases: Vec<String>,
     pub docker_image: String,
     pub offline_lockfile_resolved: bool,
     pub isolated_tests_passed: bool,
@@ -59,6 +62,7 @@ struct BuildEvidence {
     commands: Vec<String>,
     dependencies_added: Vec<String>,
     compatible_constraints_retained: Vec<String>,
+    verified_api_aliases: Vec<String>,
     repair_actions: Vec<String>,
     tests_passed: bool,
     elapsed_seconds: f64,
@@ -145,6 +149,9 @@ pub fn compose_verified_rust(
             target_root: staged.clone(),
             license_reviewed: true,
         })?;
+        let verified_api_aliases = apply_verified_api_aliases(
+            &staged, &wired.module_name, &options.api_aliases
+        )?;
         preserve_source_attribution(&capsule.manifest, &capsule.root, &staged)?;
         let image_id = inspect_local_image_id()?;
         let user = nonroot_container_user()?;
@@ -191,6 +198,7 @@ pub fn compose_verified_rust(
             ],
             dependencies_added: added.clone(),
             compatible_constraints_retained: compatible_constraints_retained.clone(),
+            verified_api_aliases: verified_api_aliases.clone(),
             repair_actions: if logs.contains("COMPOSER_REPAIR: lockfile_regenerated") {
                 vec!["lockfile_regenerated_once_after_missing_or_stale_check".into()]
             } else {
@@ -210,6 +218,7 @@ pub fn compose_verified_rust(
             capsule_id: wired.capsule_id,
             new_dependencies: added,
             compatible_constraints_retained,
+            verified_api_aliases,
             docker_image: DEFAULT_IMAGE.into(),
             offline_lockfile_resolved: true,
             isolated_tests_passed: true,
@@ -222,6 +231,77 @@ pub fn compose_verified_rust(
         let _ = fs::remove_dir_all(&staged);
     }
     outcome
+}
+
+/// Opt-in API facade: re-export selected imported public items under aliases
+/// expected by the target. This never rewrites the upstream source or attempts
+/// to infer types. Rust compilation and tests independently prove each export.
+fn apply_verified_api_aliases(
+    staged: &Path,
+    module_name: &str,
+    aliases: &[String],
+) -> Result<Vec<String>, VerifiedRustError> {
+    if aliases.is_empty() {
+        return Ok(Vec::new());
+    }
+    if aliases.len() > 8 {
+        return Err(VerifiedRustError::Unsafe(
+            "no more than eight explicit API aliases per integration".into(),
+        ));
+    }
+    let lib = staged.join("src/lib.rs");
+    let meta = fs::symlink_metadata(&lib).map_err(|_| {
+        VerifiedRustError::Unsafe(
+            "API aliases require an existing src/lib.rs library target".into(),
+        )
+    })?;
+    if !meta.is_file() || meta.file_type().is_symlink() {
+        return Err(VerifiedRustError::Unsafe("invalid library entrypoint".into()));
+    }
+    let original = fs::read_to_string(&lib)?;
+    let mut added = Vec::new();
+    let mut names = std::collections::BTreeSet::new();
+    let mut update = original.clone();
+    for rule in aliases {
+        let (source, alias) = rule.split_once('=').ok_or_else(|| {
+            VerifiedRustError::Unsafe(
+                "API alias requires source::path=TargetName".into(),
+            )
+        })?;
+        let segments = source.split("::").collect::<Vec<_>>();
+        if rule.len() > 160 || segments.is_empty() || segments.len() > 8
+            || !segments.iter().all(|s| valid_public_alias_identifier(s))
+            || !valid_public_alias_identifier(alias)
+            || alias == module_name
+            || !names.insert(alias.to_string())
+        {
+            return Err(VerifiedRustError::Unsafe(
+                format!("invalid or duplicated API alias: {rule}"),
+            ));
+        }
+        let declaration = format!(
+            "pub use crate::{module_name}::{source} as {alias};"
+        );
+        if original.contains(&declaration) {
+            return Err(VerifiedRustError::Unsafe(
+                format!("API alias is already declared: {rule}"),
+            ));
+        }
+        update.push_str(&format!(
+            "\n// Software Composer: explicit compiler-verified API facade\n{declaration}\n"
+        ));
+        added.push(rule.clone());
+    }
+    fs::write(&lib, update)?;
+    Ok(added)
+}
+
+fn valid_public_alias_identifier(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    !bytes.is_empty()
+        && (bytes[0].is_ascii_alphabetic() || bytes[0] == b'_')
+        && value != "_"
+        && bytes.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_')
 }
 
 fn copy_bounded_target(source: &Path, output: &Path) -> Result<(), VerifiedRustError> {
@@ -1059,6 +1139,35 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_or_duplicate_api_aliases_without_mutating_library() {
+        let root = std::env::temp_dir().join(format!("composer-api-alias-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("src")).unwrap();
+        let lib = root.join("src/lib.rs");
+        let original = "pub mod composer_example;\n";
+        fs::write(&lib, original).unwrap();
+        let bad = vec!["helper::answer=bad;injection".to_owned()];
+        assert!(matches!(
+            apply_verified_api_aliases(&root, "composer_example", &bad),
+            Err(VerifiedRustError::Unsafe(_))
+        ));
+        assert_eq!(fs::read_to_string(&lib).unwrap(), original);
+        let duplicate = vec![
+            "helper::answer=ported".to_owned(),
+            "helper::other=ported".to_owned(),
+        ];
+        assert!(apply_verified_api_aliases(&root, "composer_example", &duplicate).is_err());
+        assert_eq!(fs::read_to_string(&lib).unwrap(), original);
+        let added = apply_verified_api_aliases(
+            &root, "composer_example", &["helper::answer=ported".into()]
+        ).unwrap();
+        assert_eq!(added, vec!["helper::answer=ported"]);
+        assert!(fs::read_to_string(&lib).unwrap().contains(
+            "pub use crate::composer_example::helper::answer as ported;"
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn rejects_symlink_snapshot_files_and_requires_review_before_io() {
         let result = compose_verified_rust(&VerifiedRustOptions {
             capsule_root: PathBuf::from("nonexistent"),
@@ -1066,6 +1175,7 @@ mod tests {
             output_root: PathBuf::from("nonexistent"),
             license_reviewed: false,
             registry_cache: None,
+            api_aliases: Vec::new(),
         });
         assert!(matches!(result, Err(VerifiedRustError::ReviewRequired)));
     }

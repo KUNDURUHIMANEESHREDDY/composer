@@ -116,6 +116,46 @@ def verify_nested_modules(root: Path, target: Path) -> None:
     print("PASS nested Rust modules: 3-file dependency closure, crate path rewrite,"
           " offline serde_json, original unchanged")
 
+    # Contract test proves the alias resolves from the target's public crate
+    # API. This target cannot compile its integration test without the alias.
+    target_api = root / "target-nested-api"
+    shutil.copytree(target, target_api)
+    (target_api / "tests").mkdir()
+    (target_api / "tests/api_contract.rs").write_text(
+        "use composed_target::adapted_scale;\n"
+        "#[test] fn adapted_public_api_works() { "
+        "assert_eq!(adapted_scale(21), 42); }\n",
+        encoding="utf-8"
+    )
+    output_api = root / "verified-nested-api"
+    adapted = json.loads(cli(
+        "verify-rust", str(capsule), str(target_api),
+        "--output", str(output_api), "--license-reviewed",
+        "--registry-cache", str(CARGO_CACHE),
+        "--api-alias", "math::double=adapted_scale",
+    ))
+    assert adapted["isolated_tests_passed"] is True
+    assert adapted["verified_api_aliases"] == ["math::double=adapted_scale"]
+    assert "pub use crate::composer_nested_calculator::math::double as adapted_scale;" in (
+        output_api / "src/lib.rs"
+    ).read_text()
+    assert (target_api / "src/lib.rs").read_bytes() == original
+    assert json.loads((output_api / "composer-build-evidence.json").read_text())[
+        "verified_api_aliases"
+    ] == ["math::double=adapted_scale"]
+    print("PASS compiler-verified API facade: source symbol adapted to target contract")
+
+    bad_api_output = root / "must-reject-unsafe-alias"
+    cli(
+        "verify-rust", str(capsule), str(target),
+        "--output", str(bad_api_output), "--license-reviewed",
+        "--registry-cache", str(CARGO_CACHE),
+        "--api-alias", "math::double=bad;inject",
+        expect_success=False
+    )
+    assert not bad_api_output.exists()
+    print("PASS malformed API alias rejected without publishing output")
+
     broken = root / "source-nested-broken"
     shutil.copytree(source, broken)
     leaf = broken / "src/math/util.rs"
