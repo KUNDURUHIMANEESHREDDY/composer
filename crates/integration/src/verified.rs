@@ -149,9 +149,8 @@ pub fn compose_verified_rust(
             target_root: staged.clone(),
             license_reviewed: true,
         })?;
-        let verified_api_aliases = apply_verified_api_aliases(
-            &staged, &wired.module_name, &options.api_aliases
-        )?;
+        let verified_api_aliases =
+            apply_verified_api_aliases(&staged, &wired.module_name, &options.api_aliases)?;
         preserve_source_attribution(&capsule.manifest, &capsule.root, &staged)?;
         let image_id = inspect_local_image_id()?;
         let user = nonroot_container_user()?;
@@ -256,7 +255,9 @@ fn apply_verified_api_aliases(
         )
     })?;
     if !meta.is_file() || meta.file_type().is_symlink() {
-        return Err(VerifiedRustError::Unsafe("invalid library entrypoint".into()));
+        return Err(VerifiedRustError::Unsafe(
+            "invalid library entrypoint".into(),
+        ));
     }
     let original = fs::read_to_string(&lib)?;
     let mut added = Vec::new();
@@ -264,28 +265,26 @@ fn apply_verified_api_aliases(
     let mut update = original.clone();
     for rule in aliases {
         let (source, alias) = rule.split_once('=').ok_or_else(|| {
-            VerifiedRustError::Unsafe(
-                "API alias requires source::path=TargetName".into(),
-            )
+            VerifiedRustError::Unsafe("API alias requires source::path=TargetName".into())
         })?;
         let segments = source.split("::").collect::<Vec<_>>();
-        if rule.len() > 160 || segments.is_empty() || segments.len() > 8
+        if rule.len() > 160
+            || segments.is_empty()
+            || segments.len() > 8
             || !segments.iter().all(|s| valid_public_alias_identifier(s))
             || !valid_public_alias_identifier(alias)
             || alias == module_name
             || !names.insert(alias.to_string())
         {
-            return Err(VerifiedRustError::Unsafe(
-                format!("invalid or duplicated API alias: {rule}"),
-            ));
+            return Err(VerifiedRustError::Unsafe(format!(
+                "invalid or duplicated API alias: {rule}"
+            )));
         }
-        let declaration = format!(
-            "pub use crate::{module_name}::{source} as {alias};"
-        );
+        let declaration = format!("pub use crate::{module_name}::{source} as {alias};");
         if original.contains(&declaration) {
-            return Err(VerifiedRustError::Unsafe(
-                format!("API alias is already declared: {rule}"),
-            ));
+            return Err(VerifiedRustError::Unsafe(format!(
+                "API alias is already declared: {rule}"
+            )));
         }
         update.push_str(&format!(
             "\n// Software Composer: explicit compiler-verified API facade\n{declaration}\n"
@@ -301,7 +300,9 @@ fn valid_public_alias_identifier(value: &str) -> bool {
     !bytes.is_empty()
         && (bytes[0].is_ascii_alphabetic() || bytes[0] == b'_')
         && value != "_"
-        && bytes.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
 }
 
 fn copy_bounded_target(source: &Path, output: &Path) -> Result<(), VerifiedRustError> {
@@ -1158,12 +1159,17 @@ mod tests {
         assert!(apply_verified_api_aliases(&root, "composer_example", &duplicate).is_err());
         assert_eq!(fs::read_to_string(&lib).unwrap(), original);
         let added = apply_verified_api_aliases(
-            &root, "composer_example", &["helper::answer=ported".into()]
-        ).unwrap();
+            &root,
+            "composer_example",
+            &["helper::answer=ported".into()],
+        )
+        .unwrap();
         assert_eq!(added, vec!["helper::answer=ported"]);
-        assert!(fs::read_to_string(&lib).unwrap().contains(
-            "pub use crate::composer_example::helper::answer as ported;"
-        ));
+        assert!(
+            fs::read_to_string(&lib)
+                .unwrap()
+                .contains("pub use crate::composer_example::helper::answer as ported;")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
