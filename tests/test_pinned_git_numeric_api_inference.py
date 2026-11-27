@@ -22,17 +22,11 @@ CONTRACT = existing.CONTRACT
 GOOD = """use trigram::ported_jaro;
 #[test]
 fn independently_verify_owned_string_jaro() {
-    let cases = [
-        ("", "", 1.0),
-        ("same", "same", 1.0),
-        ("abc", "xyz", 0.0),
-        ("MARTHA", "MARHTA", 17.0 / 18.0),
-        ("Friedrich Nietzsche", "Jean-Paul Sartre", 0.3918859649122807),
-    ];
-    for (a, b, value) in cases {
-        let actual = ported_jaro(a.to_owned(), b.to_owned());
-        assert!((actual - value).abs() < 1e-6, "case {a} vs {b}: {actual}");
-    }
+    assert!((ported_jaro("".to_owned(), "".to_owned()) - 1.0).abs() < 1e-12);
+    assert!((ported_jaro("same".to_owned(), "same".to_owned()) - 1.0).abs() < 1e-12);
+    assert!(ported_jaro("abc".to_owned(), "xyz".to_owned()).abs() < 1e-12);
+    assert!((ported_jaro("MARTHA".to_owned(), "MARHTA".to_owned()) - 17.0 / 18.0).abs() < 1e-12);
+    assert!((ported_jaro("Friedrich Nietzsche".to_owned(), "Jean-Paul Sartre".to_owned()) - 0.392).abs() < 0.001);
 }
 """
 
