@@ -3,7 +3,7 @@
 Composer's published-crate reuse and Git-only reuse are **not** new algorithm
 implementations. Both rely on Cargo's existing dependency solver and the
 original upstream code. This acceptance milestone covers two different Git-only
-upstream repositories, different capabilities, and unrelated target projects.
+upstream repositories and different capabilities in one independently maintained public target.
 
 ## Sources and proof
 
@@ -13,8 +13,8 @@ upstream repositories, different capabilities, and unrelated target projects.
 - \`weihanglo/rust-algorithm-club\`, SHA
   \`1954301f21d44c18ea44864a776a3f6fd72eaefe\`,
   existing optimized and naive \`levenshtein_distance\` functions into
-  \`life4/textdistance.rs\` at
-  \`0f92088dfc84a99a7652b3f6d7e268afd98dbaa6\`.
+  \`ijt/trigram\` at
+  \`45af254dcd7b5c8aac4feb336192204791cd1e2f\`.
 
 The CI acceptance requires independent target-owned semantic assertions
 and fail-closed rejection of a wrong but type-compatible function, exact
@@ -53,7 +53,7 @@ a third-party source certification or general SLSA level claim.
 
 ## Remaining release gates
 
-- Generalize beyond two curated public Git-only sources. Existing contracts
+- Generalize beyond two curated public Git-only sources and one verified external target. Existing contracts
   prove specific behaviors and don't establish arbitrary semantic correctness.
 - Review malicious-build-script isolation, dependency trust, native libraries,
   Git workspaces/monorepos, network credentials and source-provenance identity.
