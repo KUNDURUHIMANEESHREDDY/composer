@@ -192,7 +192,9 @@ def verify_dependency_conflict(target: Path, root: Path) -> None:
         "--reviewed-api-rule", rule, "--contract-test", TEST,
         require_success=False,
     )
-    require_negative_failure(response, output, original, work, "disjoint Cargo semver requirements")
+    require_negative_failure(response, output, original, work,
+                             "disjoint Cargo semver requirements",
+                             "incompatible with source")
 
 
 
