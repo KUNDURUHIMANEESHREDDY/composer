@@ -1,0 +1,53 @@
+name: Additional unfamiliar Rust target behavioral integration matrix
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/heldout30-functional-extra.yml
+      - tests/test_heldout30_functional_anyhow.py
+      - tests/test_heldout30_functional_extra.py
+      - tests/heldout30_pins.json
+      - crates/integration/**
+      - Cargo.lock
+
+permissions:
+  contents: read
+
+jobs:
+  repeated-functional:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: unicode-segmentation
+            repository: unicode-rs/unicode-segmentation
+          - case: num-traits
+            repository: rust-num/num-traits
+          - case: bitflags
+            repository: bitflags/bitflags
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
+      - name: Prepare existing offline Docker verifier
+        run: docker pull rust:1.99-slim
+      - name: Repeat three real target-owned behavioral integrations and reject wrong behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u tests/test_heldout30_functional_extra.py \
+            --target-case ${{ matrix.case }} 2>&1 | tee heldout-extra.log
+          grep -q 'PASS held-out target ${{ matrix.repository }} functional trial 3/3' heldout-extra.log
+          grep -q 'PASS wrong-function control rejected, no publication' heldout-extra.log
+          grep -q 'EVIDENCE_JSON ' heldout-extra.log
+      - name: Retain failed and successful behavioral evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
+        with:
+          name: composer-heldout30-functional-${{ matrix.case }}
+          path: heldout-extra.log
+          if-no-files-found: warn
+          retention-days: 14

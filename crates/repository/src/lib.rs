@@ -166,10 +166,26 @@ pub fn acquire_and_inspect(
 
 fn git_command() -> Command {
     let mut command = Command::new("git");
+    // Highest-precedence native Git options block checkout-local fsmonitor
+    // execution and unnecessary index caching in all host Git invocations.
+    command.args([
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.untrackedCache=false",
+    ]);
     command
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "")
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_ALLOW_PROTOCOL", "https");
+        .env("GIT_ATTR_NOSYSTEM", "1")
+        .env("GIT_ALLOW_PROTOCOL", "https")
+        // Do not permit inherited Git config/environment to inject host
+        // filters, templates or external helper execution at clone time.
+        .env_remove("GIT_CONFIG_PARAMETERS")
+        .env_remove("GIT_CONFIG_COUNT")
+        .env_remove("GIT_EXTERNAL_DIFF")
+        .env_remove("GIT_TEMPLATE_DIR");
 
     #[cfg(windows)]
     command.env("GIT_CONFIG_GLOBAL", "NUL");
@@ -359,6 +375,35 @@ fn is_manifest_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_git_metadata_overrides_checkout_fsmonitor_cross_platform() {
+        let base = std::env::temp_dir().join(format!("composer-host-git-{}", Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let init = Command::new("git")
+            .arg("-C")
+            .arg(&base)
+            .args(["init", "-q"])
+            .output()
+            .unwrap();
+        assert!(init.status.success());
+        let config = Command::new("git")
+            .arg("-C")
+            .arg(&base)
+            .args(["config", "core.fsmonitor", "true"])
+            .output()
+            .unwrap();
+        assert!(config.status.success());
+        let checked = git_command()
+            .arg("-C")
+            .arg(&base)
+            .args(["config", "--get", "core.fsmonitor"])
+            .output()
+            .unwrap();
+        assert!(checked.status.success());
+        assert_eq!(String::from_utf8_lossy(&checked.stdout).trim(), "false");
+        fs::remove_dir_all(base).unwrap();
+    }
 
     #[test]
     fn parses_canonical_github_https_url() {

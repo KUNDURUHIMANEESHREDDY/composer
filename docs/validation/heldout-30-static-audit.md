@@ -44,3 +44,25 @@ No production release or automatic merge is authorized by this audit.
 Windows Docker Desktop `runsc` execution, independent threat-model and
 supply-chain review, code-signing/updates, and clean-machine user acceptance
 remain separate release gates.
+
+## Verified hosted results (commit `875c09c941da0a68244d0bf504f1120898b09e1a`)
+
+[GitHub Actions run 45992440098](https://github.com/KUNDURUHIMANEESHREDDY/composer/actions/runs/45992440098)
+completed all three ten-repository shards successfully. Examining the emitted
+per-repository JSON records (not only the job status) confirmed:
+
+- **30/30** repositories passed immutable Git commit/tree checks,
+  two consecutive deterministic Composer analysis runs, graph-to-tracked-file
+  checks, and unchanged-checkout checks.
+- **3,062** source files were parsed, with **56,129** reported symbols
+  across the frozen cohort.
+- No repository from this cohort was used to perform a behavioral capability
+  integration in this particular workflow: **0/30 functional cases attempted**.
+- No failed project was removed from the denominator. Repositories that fail
+  acquisition, parsing, repeatability or source-preservation checks are designed
+  to remain in the JSON result with a failed status.
+
+These measurements concern Composer's **source inspection and static analysis
+engine only**. The counts do not verify that all 56,129 symbols are interpreted
+semantically correctly, or that a capability can be reused and tested across
+these 30 targets. They are not production acceptance.
