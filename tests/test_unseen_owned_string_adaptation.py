@@ -20,7 +20,8 @@ TARGET = ("https://github.com/mattgathu/slugify.git",
           "6f974c9de857ac028b4ae604423fa82c183ae006")
 CATALOG = Path(__file__).resolve().parents[1] / "examples/approved-external-capabilities.json"
 CONTRACT = "tests/composer_external_transliteration_contract.rs"
-VALID = """use slugify::transliterate;
+VALID = """extern crate slugify;
+use slugify::transliterate;
 #[test]
 fn independent_external_transliteration() {
     assert_eq!(transliterate("Æneid".to_owned()), "AEneid");
@@ -30,7 +31,8 @@ fn independent_external_transliteration() {
     assert_eq!(transliterate(String::new()), "");
 }
 """
-WRONG = """use slugify::transliterate;
+WRONG = """extern crate slugify;
+use slugify::transliterate;
 #[test]
 fn incorrect_semantics_must_not_publish() {
     assert_eq!(transliterate("Æneid".to_owned()), "Æneid");
