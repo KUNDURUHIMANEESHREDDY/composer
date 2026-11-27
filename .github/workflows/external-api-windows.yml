@@ -63,6 +63,8 @@ jobs:
           if ($exit -ne 2 -or $result.disposition -ne "docker_engine_unavailable" -or $result.verified_windows_docker_desktop_gvisor) {
             throw "Missing Docker engine was misclassified or treated as success"
           }
+          # The expected probe exit 2 must not become the GitHub job exit code.
+          $global:LASTEXITCODE = 0
           Write-Output "PASS mocked missing-engine diagnostic; live Docker Desktop still unverified"
       - name: Preserve Windows help output
         if: always()
