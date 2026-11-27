@@ -7,7 +7,8 @@ use composer_integration::{
     UpstreamCrateOptions, UpstreamGitOptions, UpstreamRecoveryCandidate, UpstreamRecoveryOptions,
     VerifiedRustOptions, apply_integration, compose_verified_rust, compose_verified_rust_batch,
     discover_external_rust, discover_rust_api_contracts, plan_integration, recover_upstream_crate,
-    verify_capsule, verify_upstream_crate, verify_upstream_git, wire_rust_module,
+    verify_capsule, verify_upstream_crate, verify_upstream_git, verify_upstream_git_candidates,
+    wire_rust_module,
 };
 use composer_intelligence::{
     CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
@@ -208,9 +209,14 @@ enum Command {
         /// Upstream Cargo package name.
         #[arg(long)]
         package: String,
-        /// Existing upstream public symbol, e.g. jaro or str::jaro.
+        /// First reviewed source function. If --alternative-public-symbol is
+        /// present, test all reviewed alternatives and publish only one winner.
         #[arg(long)]
         public_symbol: String,
+        /// Additional reviewed source functions (1-4) with the same target-owned
+        /// contract. Each runs through the existing compiler/Docker verifier.
+        #[arg(long = "alternative-public-symbol")]
+        alternative_public_symbols: Vec<String>,
         /// Target API name called by independent tests.
         #[arg(long)]
         target_alias: String,
@@ -500,6 +506,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             upstream_commit,
             package,
             public_symbol,
+            alternative_public_symbols,
             target_alias,
             target_signature,
             infer_owned_string_signature,
@@ -508,7 +515,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             git_cache,
             license_reviewed,
         } => {
-            let result = verify_upstream_git(&UpstreamGitOptions {
+            let options = UpstreamGitOptions {
                 target_root: target,
                 output_root: output,
                 upstream_checkout,
@@ -523,7 +530,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 registry_cache,
                 git_cache,
                 license_reviewed,
-            })?;
+            };
+            let result = if alternative_public_symbols.is_empty() {
+                verify_upstream_git(&options)?
+            } else {
+                verify_upstream_git_candidates(&options, &alternative_public_symbols)?
+            };
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Command::DiscoverExternalRust {
