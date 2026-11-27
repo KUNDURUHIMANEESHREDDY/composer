@@ -1,0 +1,40 @@
+name: Held-out Rust semantic integration benchmark
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/heldout-rust-semantics.yml
+      - tests/test_unseen_semantics_public.py
+      - crates/integration/src/**
+      - crates/intelligence/src/**
+
+permissions:
+  contents: read
+
+jobs:
+  heldout-semantic-integration:
+    if: github.repository == 'KUNDURUHIMANEESHREDDY/composer' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out candidate implementation
+        uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Prepare restricted verifier
+        run: docker pull rust:1.99-slim
+      - name: Attempt three held-out semantic transfers and independent negative controls
+        env:
+          COMPOSER_UNSEEN_REPEATS: "3"
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 tests/test_unseen_semantics_public.py 2>&1 | tee heldout-semantic-benchmark.log
+      - name: Retain evidence on success or failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: heldout-semantic-benchmark-evidence
+          path: heldout-semantic-benchmark.log
+          if-no-files-found: warn
