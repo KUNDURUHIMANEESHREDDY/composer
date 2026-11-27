@@ -77,10 +77,14 @@ A Feature Capsule remains a traceable extraction bundle, not a guaranteed standa
 - [x] Re-verify staged capsule contents and manifest hash before publishing the staging directory.
 - [x] Opt-in single-file Rust module wiring with backup, collision checks, and explicit review assertion (narrow first source-level slice).
 - [x] Verified-copy Rust integration: conservative direct dependency adoption, offline Cargo lockfile resolution and offline Docker tests with limited resources and no network (narrow first sandbox slice).
-- [ ] Generate general-purpose production adapters and apply multi-file/cross-language integration patches.
-- [ ] Resolve dependency versions, install packages, and validate lockfiles.
-- [ ] Run unit, contract, integration, and regression tests in a disposable sandbox.
-- [ ] Add bounded repair, rollback, and a complete transformation/test evidence report.
+- [x] Bounded composition of 2–5 distinct reviewed single-file Rust capsules with isolated tests after every stage, aggregate evidence and all-or-nothing output publishing.
+- [x] Reconcile overlapping version-string Cargo requirements conservatively, with exact selected lockfile version checked against both requirements.
+- [x] Limited Docker hardening: inspect and use a fixed local image ID, read-only root, network/IPC isolation, unprivileged UID, no extra Linux capabilities, resource and timeout limits.
+- [x] One bounded automatic repair for explicitly missing/stale Cargo lockfiles, no repeated application test retries.
+- [ ] General-purpose adapters, multi-file extraction/rewrites and cross-language integration.
+- [ ] Full dependency graph solving, safe incompatible-version migrations and offline registry integrity/provenance policy.
+- [ ] Independent VM-grade sandbox hardening, hostile-input testing and supply-chain verification.
+- [ ] General autonomous code repair with typed diagnosis, risk-aware patching, bounded retries and end-to-end diff evidence.
 
 ## Milestone 6 — Autonomous engineering loop
 

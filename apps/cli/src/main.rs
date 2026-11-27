@@ -3,8 +3,9 @@ use std::{error::Error, fs, net::SocketAddr, path::PathBuf};
 use clap::{Parser, Subcommand};
 use composer_core::ProjectSpec;
 use composer_integration::{
-    IntegrationOptions, RustWiringOptions, VerifiedRustOptions, apply_integration,
-    compose_verified_rust, plan_integration, verify_capsule, wire_rust_module,
+    BatchRustOptions, IntegrationOptions, RustWiringOptions, VerifiedRustOptions,
+    apply_integration, compose_verified_rust, compose_verified_rust_batch, plan_integration,
+    verify_capsule, wire_rust_module,
 };
 use composer_intelligence::{
     CapsuleOptions, analyze_repository, create_feature_capsule, recommend_feature_seeds,
@@ -123,6 +124,24 @@ enum Command {
         #[arg(long)]
         license_reviewed: bool,
         /// Read-only Cargo registry cache to use for offline dependency solving.
+        #[arg(long)]
+        registry_cache: Option<PathBuf>,
+    },
+    /// Verify 2-5 distinct Rust Feature Capsules in sequence, with rollback on any failure.
+    VerifyRustBatch {
+        /// Two to five reviewed Feature Capsules; repeat this flag for each.
+        #[arg(long = "capsule", required = true, num_args = 2..=5)]
+        capsules: Vec<PathBuf>,
+        /// Original target Rust application; never modified.
+        #[arg(long)]
+        target: PathBuf,
+        /// New output directory published only after every integration passes.
+        #[arg(long)]
+        output: PathBuf,
+        /// Assert independent source and license review for every capsule.
+        #[arg(long)]
+        license_reviewed: bool,
+        /// Read-only Cargo registry cache for offline dependency solving.
         #[arg(long)]
         registry_cache: Option<PathBuf>,
     },
@@ -253,6 +272,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
         } => {
             let result = compose_verified_rust(&VerifiedRustOptions {
                 capsule_root: capsule,
+                target_root: target,
+                output_root: output,
+                license_reviewed,
+                registry_cache,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::VerifyRustBatch {
+            capsules,
+            target,
+            output,
+            license_reviewed,
+            registry_cache,
+        } => {
+            let result = compose_verified_rust_batch(&BatchRustOptions {
+                capsule_roots: capsules,
                 target_root: target,
                 output_root: output,
                 license_reviewed,
