@@ -13,8 +13,8 @@ upstream repositories, different capabilities, and unrelated target projects.
 - \`weihanglo/rust-algorithm-club\`, SHA
   \`1954301f21d44c18ea44864a776a3f6fd72eaefe\`,
   existing optimized and naive \`levenshtein_distance\` functions into
-  \`rapidfuzz/strsim-rs\` at
-  \`dacc84c0dc61eff0ee0ff66962bcf2e17018ad26\`.
+  \`alexfertel/rust-algorithms\` at
+  \`06c906d13f5b197d14b4507c87b38eacde7c670a\`.
 
 The CI acceptance requires independent target-owned semantic assertions
 and fail-closed rejection of a wrong but type-compatible function, exact
