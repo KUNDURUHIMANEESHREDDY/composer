@@ -1,0 +1,38 @@
+name: OpenSSF Scorecard upstream trust review
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '29 4 * * 1'
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/ossf-scorecard.yml
+
+permissions:
+  contents: read
+
+jobs:
+  scorecard:
+    if: github.repository == 'KUNDURUHIMANEESHREDDY/composer' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out code without persisting access credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Run pinned official OpenSSF Scorecard
+        uses: ossf/scorecard-action@56eaeac26fc540dfface1f07f79b9426f1956b4d
+        with:
+          results_file: scorecard-results.sarif
+          results_format: sarif
+          publish_results: false
+      - name: Retain scorecard findings for reviewer
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: composer-ossf-scorecard-evidence
+          path: scorecard-results.sarif
+          if-no-files-found: error

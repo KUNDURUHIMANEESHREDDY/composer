@@ -1,0 +1,49 @@
+name: Independent dependency and source policy scans
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/upstream-dependency-security.yml
+      - deny.toml
+      - Cargo.lock
+      - Cargo.toml
+      - crates/**/Cargo.toml
+      - apps/**/Cargo.toml
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 2'
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    if: github.repository == 'KUNDURUHIMANEESHREDDY/composer' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out pinned Composer source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Enforce upstream cargo-deny license, source and dependency rules
+        uses: EmbarkStudios/cargo-deny-action@2739ab21c6af9681b483ae4fe5f3d56604407b2b
+        with:
+          command: check bans licenses sources
+          arguments: --all-features
+
+  osv-scanner:
+    if: github.repository == 'KUNDURUHIMANEESHREDDY/composer' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@6bc832ee85d316ab9aeccf71929026841bd0e1ee
+    with:
+      scan-args: |
+        -L
+        Cargo.lock
+      fail-on-vuln: true
+      upload-sarif: true
