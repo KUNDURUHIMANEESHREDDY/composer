@@ -173,6 +173,60 @@ def main():
             run("git", "-C", str(source), "config", "--local", "--unset", "core.fsmonitor")
         print("PASS third-party checkout fsmonitor not executed by host verification", flush=True)
 
+        # Repository-local Git clean filters run host commands during status.
+        # Composer must reject both direct and included definitions before
+        # executing a helper or publishing anything.
+        filter_script = root / "untrusted-git-clean-filter.sh"
+        filter_marker = root / "git-filter-executed-on-host"
+        filter_script.write_text(
+            "#!/bin/sh\\n" + f"printf ran > '{filter_marker}'\\n" + "cat\\n",
+            encoding="utf-8",
+        )
+        filter_script.chmod(0o700)
+        filtered, original = copy_target(target, root, "git-filter-config-guard")
+        refused_output = root / "must-not-publish-configured-filter"
+        run(
+            "git", "-C", str(source), "config", "--local",
+            "filter.untrusted.clean", str(filter_script),
+        )
+        try:
+            failed = verify(
+                filtered, refused_output, source,
+                signature=None, infer=True, require_success=False,
+            )
+            assert failed.returncode != 0
+            assert "Git filter helper configuration" in failed.stderr
+            assert not filter_marker.exists()
+            assert not refused_output.exists()
+            unchanged(filtered, original)
+        finally:
+            run("git", "-C", str(source), "config", "--local", "--unset", "filter.untrusted.clean")
+        print("PASS external Git clean filter refused before host execution", flush=True)
+
+        included_config = root / "included-third-party-git-config"
+        included_config.write_text(
+            '[filter "untrusted"]\\n' + f"process = {filter_script}\\n",
+            encoding="utf-8",
+        )
+        included_output = root / "must-not-publish-included-filter"
+        run(
+            "git", "-C", str(source), "config", "--local",
+            "include.path", str(included_config),
+        )
+        try:
+            failed = verify(
+                filtered, included_output, source,
+                signature=None, infer=True, require_success=False,
+            )
+            assert failed.returncode != 0
+            assert "Git filter helper configuration" in failed.stderr
+            assert not filter_marker.exists()
+            assert not included_output.exists()
+            unchanged(filtered, original)
+        finally:
+            run("git", "-C", str(source), "config", "--local", "--unset", "include.path")
+        print("PASS included Git process filter refused before host execution", flush=True)
+
         wrong, baseline = copy_target(target, root, "wrong-result", WRONG)
         dest = root / "must-not-publish-wrong"
         failed = verify(wrong, dest, source, require_success=False)
@@ -232,6 +286,8 @@ def main():
             "invalid_signature_rejected": True,
             "missing_adapter_rejected": True,
             "wrong_commit_rejected": True,
+            "checkout_local_filter_command_rejected": True,
+            "checkout_included_filter_command_rejected": True,
             "limitations": "Caller supplies reviewed source, target alias and independent behavior contract. Tree-sitter infers only a unique public borrowed-string type shape, not semantics; compiler and tests verify only exercised behavior. Docker is not VM isolation.",
         }, sort_keys=True), flush=True)
 
