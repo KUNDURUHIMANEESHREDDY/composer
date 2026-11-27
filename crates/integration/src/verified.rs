@@ -1019,7 +1019,15 @@ pub(crate) fn docker_build(
     image_id: &str,
     container_user: &str,
 ) -> Result<String, VerifiedRustError> {
-    docker_build_internal(staged, results, registry, None, image_id, container_user, false)
+    docker_build_internal(
+        staged,
+        results,
+        registry,
+        None,
+        image_id,
+        container_user,
+        false,
+    )
 }
 
 /// Reuse the same restricted Docker pipeline for pinned Cargo Git dependencies.
@@ -1060,7 +1068,11 @@ fn docker_build_internal(
     // remains all-targets; do not silently downgrade failed verification.
     const SCRIPT_ALL: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
     const SCRIPT_CONTRACT: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --lib --tests >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --lib --tests; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
-    let script = if contract_focused { SCRIPT_CONTRACT } else { SCRIPT_ALL };
+    let script = if contract_focused {
+        SCRIPT_CONTRACT
+    } else {
+        SCRIPT_ALL
+    };
     let name = format!("composer-verify-{}", Uuid::new_v4().simple());
     let mut cmd = Command::new("docker");
     cmd.args([
