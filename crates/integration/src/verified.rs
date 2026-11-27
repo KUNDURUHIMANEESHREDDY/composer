@@ -410,6 +410,17 @@ pub(crate) fn copy_bounded_target_with_workspace_dirs(
     output: &Path,
     workspace_dirs: &[String],
 ) -> Result<(), VerifiedRustError> {
+    copy_bounded_target_with_workspace_member(source, output, workspace_dirs, false)
+}
+
+/// Virtual Cargo workspace roots legitimately have no root src/lib.rs.
+/// Member selection is explicitly verified before requesting this mode.
+pub(crate) fn copy_bounded_target_with_workspace_member(
+    source: &Path,
+    output: &Path,
+    workspace_dirs: &[String],
+    virtual_root: bool,
+) -> Result<(), VerifiedRustError> {
     let mut total_files = 0usize;
     let mut total_bytes = 0u64;
     for name in [
@@ -473,7 +484,7 @@ pub(crate) fn copy_bounded_target_with_workspace_dirs(
             )?;
         }
     }
-    if !output.join("src").is_dir() {
+    if !virtual_root && !output.join("src").is_dir() {
         return Err(VerifiedRustError::Unsafe(
             "target src directory is missing".into(),
         ));
@@ -614,7 +625,7 @@ fn copy_tree(
         } else if kind.is_file() {
             let allowed = matches!(
                 item.extension().and_then(|ext| ext.to_str()),
-                Some("rs" | "json" | "toml" | "txt" | "md" | "sql" | "html")
+                Some("rs" | "json" | "toml" | "txt" | "md" | "sql" | "html" | "snap")
             );
             // Exactly one known, public, immutable upstream test certificate
             // is needed by smol's full-scope example compilation. Never copy
@@ -1117,6 +1128,7 @@ pub(crate) fn docker_build(
         image_id,
         container_user,
         false,
+        None,
     )
 }
 
@@ -1131,6 +1143,7 @@ pub(crate) fn docker_build_with_git_cache(
     image_id: &str,
     container_user: &str,
     contract_focused: bool,
+    workspace_member_package: Option<&str>,
 ) -> Result<String, VerifiedRustError> {
     docker_build_internal(
         staged,
@@ -1140,6 +1153,7 @@ pub(crate) fn docker_build_with_git_cache(
         image_id,
         container_user,
         contract_focused,
+        workspace_member_package,
     )
 }
 
@@ -1295,6 +1309,7 @@ fn docker_build_internal(
     image_id: &str,
     container_user: &str,
     contract_focused: bool,
+    workspace_member_package: Option<&str>,
 ) -> Result<String, VerifiedRustError> {
     // A requested gVisor runtime is mandatory, never best-effort.
     let requested_runtime = selected_verifier_runtime()?;
@@ -1305,15 +1320,28 @@ fn docker_build_internal(
     const SCRIPT_ALL: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
     const SCRIPT_ALL_FEATURES: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets --all-features >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets --all-features; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
     const SCRIPT_CONTRACT: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --lib --tests >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --lib --tests; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2; cp Cargo.lock /results/Cargo.lock";
+    // The fixed -p selector runs the selected member's test contract.
+    // No user-controlled shell source is evaluated; the package comes from
+    // Cargo's parsed, bounded package.name field and a quoted env var.
+    const SCRIPT_MEMBER: &str = "set -eu; cp -R /input/. /work/; if cargo test --locked --offline --all-targets -p \"$COMPOSER_VERIFIER_PACKAGE\" >/tmp/composer-first-test.log 2>&1; then cat /tmp/composer-first-test.log; else if grep -Fq 'lock file' /tmp/composer-first-test.log && grep -Fq -- '--locked' /tmp/composer-first-test.log; then echo COMPOSER_REPAIR: lockfile_regenerated; cargo generate-lockfile --offline; cargo test --locked --offline --all-targets -p \"$COMPOSER_VERIFIER_PACKAGE\"; else cat /tmp/composer-first-test.log; exit 1; fi; fi; cargo tree --locked --offline --depth 2 -p \"$COMPOSER_VERIFIER_PACKAGE\"; cp Cargo.lock /results/Cargo.lock";
     let all_features = selected_verifier_features()?;
-    let script = match (contract_focused, all_features) {
-        (false, true) => SCRIPT_ALL_FEATURES,
-        (true, false) => SCRIPT_CONTRACT,
-        (false, false) => SCRIPT_ALL,
-        (true, true) => {
+    let script = if workspace_member_package.is_some() {
+        if contract_focused || all_features {
             return Err(VerifiedRustError::Unsafe(
-                "all-features with contract-focused scope is unsupported".into(),
+                "workspace member verifier requires full default-feature all-targets scope".into(),
             ));
+        }
+        SCRIPT_MEMBER
+    } else {
+        match (contract_focused, all_features) {
+            (false, true) => SCRIPT_ALL_FEATURES,
+            (true, false) => SCRIPT_CONTRACT,
+            (false, false) => SCRIPT_ALL,
+            (true, true) => {
+                return Err(VerifiedRustError::Unsafe(
+                    "all-features with contract-focused scope is unsupported".into(),
+                ));
+            }
         }
     };
     let memory_mb = selected_verifier_memory_mb()?;
@@ -1355,6 +1383,19 @@ fn docker_build_internal(
         "--mount",
         &mount_arg(results, "/results", false)?,
     ]);
+    if let Some(package) = workspace_member_package {
+        if package.len() > 80
+            || package.is_empty()
+            || !package
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err(VerifiedRustError::Unsafe(
+                "invalid Cargo workspace member package selector".into(),
+            ));
+        }
+        cmd.arg(format!("--env=COMPOSER_VERIFIER_PACKAGE={package}"));
+    }
     if let Some(runtime) = requested_runtime {
         // Docker must recognize runsc; if unavailable, docker run fails closed.
         // This does not mutate daemon configuration or select a weaker fallback.

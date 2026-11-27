@@ -244,6 +244,9 @@ enum Command {
         /// Explicitly add a Cargo library facade to a genuine binary-only target.
         #[arg(long)]
         allow_binary_library_adapter: bool,
+        /// Explicit member subdirectory under a virtual Cargo workspace.
+        #[arg(long, conflicts_with = "allow_binary_library_adapter")]
+        target_member_dir: Option<String>,
     },
     /// Discover independent existing Rust capabilities via Cargo search/info
     /// and Composer's existing Rust analyzer. Read-only, no upstream code execution.
@@ -516,6 +519,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             require_upstream_signer_fingerprint,
             contract_focused,
             allow_binary_library_adapter,
+            target_member_dir,
         } => {
             let result = verify_upstream_git(&UpstreamGitOptions {
                 target_root: target,
@@ -535,6 +539,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 required_signer_fingerprint: require_upstream_signer_fingerprint,
                 contract_focused,
                 allow_binary_library_adapter,
+                target_member_dir,
             })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }

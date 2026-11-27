@@ -18,7 +18,7 @@ use crate::{
     VerifiedRustError,
     reviewed::validate_contract_test,
     verified::{
-        copy_bounded_target_with_workspace_dirs, docker_build_with_git_cache,
+        copy_bounded_target_with_workspace_member, docker_build_with_git_cache,
         inspect_local_image_id, nonroot_container_user,
     },
 };
@@ -58,6 +58,8 @@ pub struct UpstreamGitOptions {
     /// Opt-in: add a library facade to a genuine binary-only Cargo package.
     /// Reuses reviewed upstream Rust; does not modify original src/main.rs.
     pub allow_binary_library_adapter: bool,
+    /// Explicit relative member dir under an existing virtual Cargo workspace.
+    pub target_member_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +145,36 @@ fn workspace_member_paths_are_bounded_and_nontraversing() {
         let config: toml::Value =
             toml::from_str(&format!("[workspace]\nmembers=['{bad}']")).unwrap();
         assert!(workspace_member_roots(&config).is_err(), "{bad}");
+    }
+}
+
+fn checked_virtual_member_path(input: &str) -> Result<PathBuf, VerifiedRustError> {
+    let parts = input.split('/').collect::<Vec<_>>();
+    if parts.is_empty()
+        || parts.len() > 4
+        || input.len() > 100
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || part.starts_with('.')
+                || part
+                    .bytes()
+                    .any(|b| !b.is_ascii_alphanumeric() && b != b'-' && b != b'_')
+        })
+    {
+        return Err(VerifiedRustError::Unsafe(
+            "unsafe or unsupported virtual Cargo workspace member path".into(),
+        ));
+    }
+    Ok(parts.iter().collect())
+}
+
+#[test]
+fn virtual_member_dirs_are_plain_bounded_relative_paths() {
+    for valid in ["tower", "crates/petgraph", "tracing-subscriber"] {
+        assert!(checked_virtual_member_path(valid).is_ok(), "{valid}");
+    }
+    for invalid in ["../x", "x/../y", "./x", "/abs", "a//b", "x/*", "x\\foo", ""] {
+        assert!(checked_virtual_member_path(invalid).is_err(), "{invalid}");
     }
 }
 
@@ -519,21 +551,62 @@ pub fn verify_upstream_git(
         .map(|fingerprint| verify_trusted_upstream_signer(&options.upstream_checkout, fingerprint))
         .transpose()?;
     let original = options.target_root.canonicalize()?;
-    validate_contract_test(&original, &options.contract_test, &options.target_alias)?;
-    let target_manifest = original.join("Cargo.toml");
+    let root_manifest = original.join("Cargo.toml");
+    let root_cargo: toml::Value = toml::from_str(&fs::read_to_string(&root_manifest)?)
+        .map_err(|err| VerifiedRustError::Toml(err.to_string()))?;
+    let virtual_member = options
+        .target_member_dir
+        .as_deref()
+        .map(checked_virtual_member_path)
+        .transpose()?;
+    if virtual_member.is_some()
+        && (root_cargo.get("workspace").is_none() || root_cargo.get("package").is_some())
+    {
+        return Err(VerifiedRustError::Dependency(
+            "explicit member selection requires a virtual Cargo workspace".into(),
+        ));
+    }
+    let target_dir = virtual_member
+        .as_ref()
+        .map_or_else(|| original.clone(), |member| original.join(member));
+    let target_manifest = target_dir.join("Cargo.toml");
     let mut cargo: toml::Value = toml::from_str(&fs::read_to_string(&target_manifest)?)
         .map_err(|err| VerifiedRustError::Toml(err.to_string()))?;
     if cargo.get("package").is_none()
         || cargo.get("patch").is_some()
         || cargo.get("replace").is_some()
+        || (virtual_member.is_none()
+            && (root_cargo.get("patch").is_some() || root_cargo.get("replace").is_some()))
     {
         return Err(VerifiedRustError::Dependency(
-            "Git capability import requires a root library package without patch/replace overrides"
+            "Git capability import requires a root or selected member library package without package-level overrides"
                 .into(),
         ));
     }
-    let workspace_dirs = workspace_member_roots(&cargo)?;
-    let lib = original.join("src/lib.rs");
+    validate_contract_test(&target_dir, &options.contract_test, &options.target_alias)?;
+    let workspace_dirs = workspace_member_roots(&root_cargo)?;
+    let selected_package = if virtual_member.is_some() {
+        Some(
+            cargo
+                .get("package")
+                .and_then(|p| p.get("name"))
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| {
+                    VerifiedRustError::Unsafe(
+                        "virtual workspace member has no valid Cargo package name".into(),
+                    )
+                })?
+                .to_owned(),
+        )
+    } else {
+        None
+    };
+    if virtual_member.is_some() && options.allow_binary_library_adapter {
+        return Err(VerifiedRustError::Unsafe(
+            "virtual workspace member cannot use binary library adapter".into(),
+        ));
+    }
+    let lib = target_dir.join("src/lib.rs");
     let original_lib = match fs::symlink_metadata(&lib) {
         Ok(meta)
             if meta.is_file()
@@ -622,9 +695,17 @@ pub fn verify_upstream_git(
         return Err(err.into());
     }
     let result = (|| {
-        copy_bounded_target_with_workspace_dirs(&original, &staged, &workspace_dirs)?;
+        copy_bounded_target_with_workspace_member(
+            &original,
+            &staged,
+            &workspace_dirs,
+            virtual_member.is_some(),
+        )?;
+        let target_staged_dir = virtual_member
+            .as_ref()
+            .map_or_else(|| staged.clone(), |member| staged.join(member));
         fs::write(
-            staged.join("Cargo.toml"),
+            target_staged_dir.join("Cargo.toml"),
             toml::to_string_pretty(&cargo)
                 .map_err(|err| VerifiedRustError::Toml(err.to_string()))?,
         )?;
@@ -638,7 +719,7 @@ pub fn verify_upstream_git(
                 options.public_symbol, options.target_alias,
             ));
         }
-        fs::write(staged.join("src/lib.rs"), library)?;
+        fs::write(target_staged_dir.join("src/lib.rs"), library)?;
         let image_id = inspect_local_image_id()?;
         let container_user = nonroot_container_user()?;
         let start = Instant::now();
@@ -650,6 +731,7 @@ pub fn verify_upstream_git(
             &image_id,
             &container_user,
             options.contract_focused,
+            selected_package.as_deref(),
         )?;
         let elapsed = start.elapsed().as_secs_f64();
         let source = validate_git_lock(&results.join("Cargo.lock"), &options.package, &repo, rev)?;
@@ -690,7 +772,10 @@ pub fn verify_upstream_git(
             "docker_rustflags_profile": crate::verified::selected_verifier_rustflags_profile()?,
             "cargo_workspace_root_package": cargo.get("workspace").is_some(),
             "binary_library_adapter_created": original_lib.is_empty(),
-            "verification_scope": if options.contract_focused { "library_and_integration_tests" } else { "all_targets" },
+            "target_member_dir": options.target_member_dir,
+            "target_member_package": selected_package,
+            "root_virtual_workspace": virtual_member.is_some(),
+            "verification_scope": if virtual_member.is_some() { "selected_workspace_member_all_targets" } else if options.contract_focused { "library_and_integration_tests" } else { "all_targets" },
             "third_party_benchmarks_verified": !options.contract_focused,
             "docker_image_id": image_id,
             "docker_image_reference": crate::verified::selected_verifier_image()?,
@@ -724,7 +809,9 @@ pub fn verify_upstream_git(
             verified_signer_fingerprint: signer.clone(),
             original_target_unchanged: true,
             offline_tests_passed: true,
-            verification_scope: if options.contract_focused {
+            verification_scope: if virtual_member.is_some() {
+                "selected_workspace_member_all_targets".into()
+            } else if options.contract_focused {
                 "library_and_integration_tests".into()
             } else {
                 "all_targets".into()
@@ -769,6 +856,7 @@ mod tests {
             required_signer_fingerprint: None,
             contract_focused: false,
             allow_binary_library_adapter: false,
+            target_member_dir: None,
         };
         assert!(matches!(
             verify_upstream_git(&opts),

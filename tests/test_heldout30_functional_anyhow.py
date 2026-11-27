@@ -24,6 +24,8 @@ PROVE_FULL_TARGET_FAILURE = False
 EXPECT_WORKSPACE = False
 EXPLICIT_CONTRACT_TEST = False
 ALLOW_BINARY_LIBRARY_ADAPTER = False
+TARGET_MEMBER_DIR = None
+TARGET_MEMBER_PACKAGE = None
 CONTRACT = "tests/composer_heldout30_totient_contract.rs"
 INDEPENDENT_ORACLE = """use anyhow::ported_totient;
 #[test]
@@ -39,7 +41,7 @@ fn totient_behavior_is_not_merely_type_compatible() {
 def prefetch_cargo(target: Path, base: Path) -> Path:
     prefetch = base / "prefetch"
     shutil.copytree(target, prefetch, ignore=shutil.ignore_patterns(".git"))
-    manifest = prefetch / "Cargo.toml"
+    manifest = prefetch / TARGET_MEMBER_DIR / "Cargo.toml" if TARGET_MEMBER_DIR else prefetch / "Cargo.toml"
     text = manifest.read_text(encoding="utf-8")
     assert "[package]" in text
     assert "composer_git_the_algorithms_rust" not in text
@@ -107,18 +109,23 @@ def prefetch_cargo(target: Path, base: Path) -> Path:
 def target_copy(original: Path, base: Path, label: str, lock: Path):
     working = base / ("target-" + label)
     shutil.copytree(original, working, ignore=shutil.ignore_patterns(".git"))
-    (working / "tests").mkdir(exist_ok=True)
-    (working / CONTRACT).write_text(INDEPENDENT_ORACLE, encoding="utf-8")
+    member_root = working / TARGET_MEMBER_DIR if TARGET_MEMBER_DIR else working
+    (member_root / "tests").mkdir(exist_ok=True)
+    (member_root / CONTRACT).write_text(INDEPENDENT_ORACLE, encoding="utf-8")
     if EXPLICIT_CONTRACT_TEST:
-        manifest = working / "Cargo.toml"
+        manifest = member_root / "Cargo.toml"
         with manifest.open("a", encoding="utf-8") as file:
             file.write("\n[[test]]\nname = 'composer_heldout30_totient_contract'\npath = 'tests/composer_heldout30_totient_contract.rs'\n")
     shutil.copy2(lock, working / "Cargo.lock")
+    contract_path = str(Path(TARGET_MEMBER_DIR) / CONTRACT) if TARGET_MEMBER_DIR else CONTRACT
     originals = {name:(working/name).read_bytes() for name in (
-        "Cargo.toml","Cargo.lock",CONTRACT
+        "Cargo.toml","Cargo.lock",contract_path
     )}
-    if (working/"src/lib.rs").exists():
-        originals["src/lib.rs"] = (working/"src/lib.rs").read_bytes()
+    if TARGET_MEMBER_DIR:
+        originals[str(Path(TARGET_MEMBER_DIR) / "Cargo.toml")] = (member_root/"Cargo.toml").read_bytes()
+    if (member_root/"src/lib.rs").exists():
+        relative_lib = str(Path(TARGET_MEMBER_DIR) / "src/lib.rs") if TARGET_MEMBER_DIR else "src/lib.rs"
+        originals[relative_lib] = (member_root/"src/lib.rs").read_bytes()
     else:
         originals["src/main.rs"] = (working/"src/main.rs").read_bytes()
     return working, originals
@@ -150,6 +157,8 @@ def verify(working: Path, upstream: Path, base: Path, name: str,
         arguments.append("--contract-focused")
     if ALLOW_BINARY_LIBRARY_ADAPTER:
         arguments.append("--allow-binary-library-adapter")
+    if TARGET_MEMBER_DIR:
+        arguments.extend(["--target-member-dir", TARGET_MEMBER_DIR])
     response = cli(*arguments, require_success=require_success)
     return response, output
 
@@ -173,6 +182,8 @@ def main():
         if ALLOW_BINARY_LIBRARY_ADAPTER:
             assert (target / "src/main.rs").is_file()
             assert not (target / "src/lib.rs").exists()
+        elif TARGET_MEMBER_DIR:
+            assert (target / TARGET_MEMBER_DIR / "src/lib.rs").is_file()
         else:
             assert (target / "src/lib.rs").is_file()
         assert any((target / name).is_file() for name in ("LICENSE-MIT","LICENSE-APACHE","LICENSE"))
@@ -186,7 +197,8 @@ def main():
             assert "feature(test)" in fail.stderr or "E0554" in fail.stderr, fail.stderr[-1200:]
             check_unchanged(rejected, unchanged)
             print(f"EXPECTED_REFUSAL {TARGET}: stable Rust rejects upstream nightly benchmark in default all-targets mode", flush=True)
-        expected_scope = ("library_and_integration_tests" if CONTRACT_FOCUSED else "all_targets")
+        expected_scope = ("selected_workspace_member_all_targets" if TARGET_MEMBER_DIR else
+                          "library_and_integration_tests" if CONTRACT_FOCUSED else "all_targets")
         positives = []
         for index in range(3):
             label = f"positive-{index}"
@@ -210,6 +222,9 @@ def main():
             assert evidence["docker_rustflags_profile"] == os.getenv("COMPOSER_VERIFIER_RUSTFLAGS_PROFILE", "default")
             assert evidence["cargo_workspace_root_package"] is EXPECT_WORKSPACE
             assert evidence["binary_library_adapter_created"] is ALLOW_BINARY_LIBRARY_ADAPTER
+            assert evidence["root_virtual_workspace"] is bool(TARGET_MEMBER_DIR)
+            assert evidence["target_member_dir"] == TARGET_MEMBER_DIR
+            assert evidence["target_member_package"] == TARGET_MEMBER_PACKAGE
             assert evidence["verification_scope"] == expected_scope
             assert evidence["docker_memory_limit_mb"] == int(os.getenv("COMPOSER_VERIFIER_MEMORY_MB", "1024"))
             assert evidence["third_party_benchmarks_verified"] is (not CONTRACT_FOCUSED)
@@ -218,7 +233,8 @@ def main():
             # already requires cargo test --all-targets to exit 0 before it
             # sets offline_tests_passed; retain evidence, not a brittle phrase.
             assert evidence["log_tail"].strip(), "missing bounded verifier log"
-            assert (output / CONTRACT).read_bytes() == (working / CONTRACT).read_bytes()
+            contract_path = Path(TARGET_MEMBER_DIR) / CONTRACT if TARGET_MEMBER_DIR else Path(CONTRACT)
+            assert (output / contract_path).read_bytes() == (working / contract_path).read_bytes()
             check_unchanged(working, originals)
             positives.append({"verified": True, "elapsed_seconds": proof["elapsed_seconds"]})
             print(f"PASS held-out target {TARGET} functional trial {index+1}/3",flush=True)
