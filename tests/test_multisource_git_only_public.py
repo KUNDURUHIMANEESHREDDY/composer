@@ -19,10 +19,10 @@ from test_pinned_public_multifile import clone_exact, run
 UPSTREAM = "https://github.com/weihanglo/rust-algorithm-club.git"
 UPSTREAM_SHA = "1954301f21d44c18ea44864a776a3f6fd72eaefe"
 PACKAGE = "rust-algorithm-club"
-TARGET = "https://github.com/life4/textdistance.rs.git"
-TARGET_SHA = "0f92088dfc84a99a7652b3f6d7e268afd98dbaa6"
+TARGET = "https://github.com/ijt/trigram.git"
+TARGET_SHA = "45af254dcd7b5c8aac4feb336192204791cd1e2f"
 CONTRACT = "tests/composer_levenshtein_external_contract.rs"
-TESTS = """use textdistance::ported_levenshtein;
+TESTS = """use trigram::ported_levenshtein;
 #[test]
 fn independent_edit_distance_oracle() {
     assert_eq!(ported_levenshtein("", ""), 0);
@@ -120,7 +120,7 @@ def test_independent_second_source() -> dict:
     with tempfile.TemporaryDirectory(prefix="composer-holdout-git-only-") as tmp:
         base = Path(tmp)
         checkout = base / "weihanglo-rust-algorithm-club"
-        source_target = base / "life4-textdistance"
+        source_target = base / "ijt-trigram"
         clone_exact(UPSTREAM, UPSTREAM_SHA, checkout)
         clone_exact(TARGET, TARGET_SHA, source_target)
         assert (checkout / "LICENSE").is_file()
@@ -187,12 +187,12 @@ def main() -> None:
     new = test_independent_second_source()
     print("EVIDENCE_JSON " + json.dumps({
         "different_git_only_upstreams": 2,
-        "different_target_repositories": 2,
+        "different_target_repositories": 1,
         "verified_git_only_imports": 3,
         "independent_second_source": new,
         "original_tests_and_provenance_gate_unchanged": True,
         "limitations": "Two pinned public Git-only projects and two unrelated targets "
-                       "are not an unbiased generalization statistic. Build attestation "
+                       "are not an unbiased generalization statistic. Both use the same public target. Build attestation "
                        "covers Composer's Windows executable, not upstream source reputation.",
     }, sort_keys=True), flush=True)
 
