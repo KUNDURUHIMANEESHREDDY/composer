@@ -285,6 +285,14 @@ mod tests {
         let test = root.join("tests/contract.rs");
         fs::write(&test, "#[test] fn test() { assert_eq!(wanted(1), 1) }\n").unwrap();
         assert!(validate_contract_test(&root, Path::new("tests/contract.rs"), "wanted").is_ok());
+        let original_manifest = fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='demo'\nversion='0.1.0'\nautotests=false\n",
+        )
+        .unwrap();
+        assert!(validate_contract_test(&root, Path::new("tests/contract.rs"), "wanted").is_err());
+        fs::write(root.join("Cargo.toml"), original_manifest).unwrap();
         for path in ["../escape.rs", "tests/../../escape.rs", "src/lib.rs"] {
             assert!(validate_contract_test(&root, Path::new(path), "wanted").is_err());
         }
