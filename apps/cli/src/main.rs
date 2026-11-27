@@ -411,6 +411,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 version,
                 public_symbol,
                 target_alias,
+                dependency_alias: None,
                 contract_test,
                 registry_cache,
                 upstream_repository,
