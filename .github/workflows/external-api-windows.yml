@@ -70,7 +70,7 @@ jobs:
           Write-Output "PASS mocked missing-engine diagnostic; live Docker Desktop still unverified"
       - name: Preserve Windows help output
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # pinned upstream
         with:
           name: composer-windows-rust-help
           path: windows-cli-help.log

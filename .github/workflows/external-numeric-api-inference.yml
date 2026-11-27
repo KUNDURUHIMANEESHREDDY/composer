@@ -31,7 +31,7 @@ jobs:
           python3 -u tests/test_pinned_git_numeric_api_inference.py 2>&1 | tee external-numeric-api-evidence.log
       - name: Retain success and failure evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # pinned upstream
         with:
           name: external-numeric-api-inference-evidence
           path: external-numeric-api-evidence.log

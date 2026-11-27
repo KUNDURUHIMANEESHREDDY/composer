@@ -33,7 +33,7 @@ jobs:
           python3 -u tests/test_pinned_git_string_adapter_public.py 2>&1 | tee git-string-adapter.log
       - name: Preserve passing and failing evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # pinned upstream
         with:
           name: third-party-git-api-adapter-evidence
           path: git-string-adapter.log

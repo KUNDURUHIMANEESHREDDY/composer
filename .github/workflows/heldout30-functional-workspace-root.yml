@@ -108,7 +108,7 @@ jobs:
           grep -q 'EVIDENCE_JSON ' heldout-workspace-root.log
       - name: Retain per-repository evidence even on failure
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned upstream
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # pinned upstream
         with:
           name: composer-heldout-workspace-root-${{ matrix.case }}
           path: heldout-workspace-root.log

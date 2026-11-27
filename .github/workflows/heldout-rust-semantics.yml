@@ -35,7 +35,7 @@ jobs:
           python3 tests/test_unseen_semantics_public.py 2>&1 | tee heldout-semantic-benchmark.log
       - name: Retain evidence on success or failure
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: heldout-semantic-benchmark-evidence
           path: heldout-semantic-benchmark.log
