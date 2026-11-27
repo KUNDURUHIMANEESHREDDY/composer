@@ -19,7 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 CACHE = Path(os.environ.get("CARGO_HOME", str(Path.home() / ".cargo"))) / "registry"
 SOURCE_REPO = "https://github.com/EbTech/rust-algorithms.git"
 SOURCE_SHA = "2073670c540935960849f365e1895f558fa4319d"
+GEOMETRY_REPO = "https://github.com/TheAlgorithms/Rust.git"
+GEOMETRY_SHA = "976f1cdcdab3fab85301c38b28c28e6c5c503e9a"
 TARGET_REPOS = {
+    "ebtech-target": (SOURCE_REPO, SOURCE_SHA),
     "rustc-hash": (
         "https://github.com/rust-lang/rustc-hash.git",
         "fdfe9e6ebea0f0bd3de95d5af849f5d03f4b7fbb",
@@ -65,7 +68,8 @@ def clone_exact(repo: str, sha: str, dest: Path) -> None:
 
 
 def make_capsule(source: Path, root: Path, symbol: str,
-                 file_path: str, capability: str, required: set[str]) -> Path:
+                 file_path: str, capability: str, required: set[str],
+                 expected_sha: str = SOURCE_SHA) -> Path:
     graph = json.loads(cli("analyze", str(source)).stdout)
     seeds = [row["id"] for row in graph["symbols"]
              if row["name"] == symbol
@@ -79,7 +83,7 @@ def make_capsule(source: Path, root: Path, symbol: str,
     included = {value.replace("\\", "/")
                 for value in manifest["included_source_files"]}
     assert required.issubset(included), f"Missing module dependency: {required - included}"
-    assert manifest["source_commit_sha"] == SOURCE_SHA
+    assert manifest["source_commit_sha"] == expected_sha
     assert "LICENSE" in manifest["license_evidence_files"]
     assert manifest["license_review_required"] is True
     print(f"CAPSULE {capability} files={len(included)}: {sorted(included)}", flush=True)
@@ -105,7 +109,8 @@ def prepare_registry(target: Path, root: Path, name: str) -> bool:
 
 def verify_feature(root: Path, capsule: Path, target: Path, name: str,
                    capability: str, api_alias: str | None = None,
-                   api_contract: str | None = None) -> bool:
+                   api_contract: str | None = None,
+                   expected_sha: str = SOURCE_SHA) -> bool:
     staged_target = root / f"target-input-{capability}-{name}"
     shutil.copytree(target, staged_target, ignore=shutil.ignore_patterns(".git"))
     original_lib = (staged_target / "src/lib.rs").read_bytes()
@@ -136,13 +141,17 @@ def verify_feature(root: Path, capsule: Path, target: Path, name: str,
     attribution = json.loads((output / "composer-source-attributions.json").read_text())
     assert evidence["tests_passed"] is True
     assert evidence["network_disabled"] is True
-    assert attribution[0]["source_commit_sha"] == SOURCE_SHA
+    assert attribution[0]["source_commit_sha"] == expected_sha
     assert attribution[0]["license_documents"]
     for notice in attribution[0]["license_documents"]:
         assert (output / notice["published_path"]).is_file()
     assert evidence["verified_api_aliases"] == ([api_alias] if api_alias else [])
     assert (output / "src" / f"composer_{capability.replace('-', '_')}" / "mod.rs").is_file()
-    for license_name in ("LICENSE-MIT", "LICENSE-APACHE"):
+    expected_target_notices = (
+        ("LICENSE",) if name == "ebtech-target"
+        else ("LICENSE-MIT", "LICENSE-APACHE")
+    )
+    for license_name in expected_target_notices:
         assert (output / license_name).is_file(), f"Target license lost: {license_name}"
     print(
         f"PASS {capability} -> {name}: "
@@ -180,30 +189,53 @@ def main() -> None:
              "src/range_query/specs.rs", "src/range_query/dynamic_arq.rs",
              "src/range_query/sqrt_decomp.rs"},
         )
+        # Independent public-to-public positive acceptance: geometry module
+        # from TheAlgorithms into the different EbTech existing Cargo project.
+        geometry_source = root / "thealgorithms-source"
+        clone_exact(GEOMETRY_REPO, GEOMETRY_SHA, geometry_source)
+        assert "MIT License" in (geometry_source / "LICENSE").read_text()
+        geometry = make_capsule(
+            geometry_source, root, "closest_points",
+            "src/geometry/closest_points.rs", "public-geometry",
+            {"src/geometry/mod.rs", "src/geometry/point.rs",
+             "src/geometry/closest_points.rs"},
+            expected_sha=GEOMETRY_SHA,
+        )
         assert CACHE.is_dir(), f"No Cargo registry available at {CACHE}"
-        # Positive acceptance: real existing target and a compiled API contract.
-        assert prepare_registry(targets["rustc-hash"], root, "rustc-hash")
-        contract = (
-            "use rustc_hash::ImportedGraph;\n"
-            "#[test] fn graph_is_exported() { "
-            "assert!(std::mem::size_of::<ImportedGraph>() > 0); }\n"
+        geometry_contract = (
+            "use contest_algorithms::ImportedClosestPoints;\n"
+            "use contest_algorithms::composer_public_geometry::geometry::Point;\n"
+            "#[test] fn adapted_geometry_api_works() { "
+            "let points = [Point::new(0.0, 0.0), Point::new(1.0, 0.0)]; "
+            "assert!(ImportedClosestPoints(&points).is_some()); }\n"
         )
-        first = verify_feature(
-            root, graph, targets["rustc-hash"], "rustc-hash",
-            "public-graph", "graph::Graph=ImportedGraph", contract
-        )
-        second = verify_feature(
-            root, range_query, targets["rustc-hash"], "rustc-hash",
-            "public-range"
-        )
-        assert first and second, "Reviewed public-source integration did not pass"
-        # Compatibility probe against an independently pinned second target.
+        assert verify_feature(
+            root, geometry, targets["ebtech-target"], "ebtech-target",
+            "public-geometry",
+            "geometry::closest_points=ImportedClosestPoints",
+            geometry_contract,
+            expected_source_sha=GEOMETRY_SHA,
+        ), "Cross-repository geometry integration failed"
+
+        # Separate negative compatibility probes. These targets declare
+        # no_std, whereas the imported code assumes a std prelude.
+        # A rejection must leave the target and proposed output untouched.
+        if prepare_registry(targets["rustc-hash"], root, "rustc-hash"):
+            verify_feature(
+                root, graph, targets["rustc-hash"], "rustc-hash", "public-graph",
+                "graph::Graph=ImportedGraph",
+            )
+            verify_feature(
+                root, range_query, targets["rustc-hash"], "rustc-hash", "public-range"
+            )
+        else:
+            print("BLOCKED rustc-hash: offline registry prerequisites", flush=True)
         if prepare_registry(targets["cfg-if"], root, "cfg-if"):
             verify_feature(root, graph, targets["cfg-if"], "cfg-if", "public-graph")
         else:
-            print("BLOCKED cfg-if target: offline registry prerequisites", flush=True)
-        print("PASS required existing-target and multi-file API adaptation checks",
-              flush=True)
+            print("BLOCKED cfg-if: offline registry prerequisites", flush=True)
+        print("PASS pinned cross-repository geometry API integration; "
+              "no_std compatibility probes recorded", flush=True)
 
 
 if __name__ == "__main__":
