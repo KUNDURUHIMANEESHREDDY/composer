@@ -42,6 +42,8 @@ pub struct UpstreamGitOptions {
     pub target_alias: String,
     /// Optional independently reviewed target API signature; typed glue only.
     pub target_signature: Option<String>,
+    /// Infer only a top-level public fn(&str[, &str...]) -> String from the pinned checkout.
+    pub infer_owned_string_signature: bool,
     pub contract_test: PathBuf,
     pub registry_cache: PathBuf,
     /// Cargo's pre-fetched git/ directory only (never entire Cargo home).
@@ -56,6 +58,7 @@ pub struct UpstreamGitResult {
     pub public_symbol: String,
     pub target_alias: String,
     pub target_signature: Option<String>,
+    pub inferred_owned_string_signature: bool,
     pub upstream_repository: String,
     pub upstream_commit: String,
     pub lockfile_git_commit_verified: bool,
@@ -280,15 +283,40 @@ pub fn verify_upstream_git(
             "Git SHA, package, public symbol or target alias invalid".into(),
         ));
     }
-    // Reject invalid or unsafe adapter requests before cloning/staging or building.
+    if options.infer_owned_string_signature && options.target_signature.is_some() {
+        return Err(VerifiedRustError::Unsafe(
+            "specify either a reviewed target signature or --infer-owned-string-signature, not both".into(),
+        ));
+    }
+    // Checkout is verified clean, at the exact requested commit and public
+    // upstream origin BEFORE its source code can influence API inference.
+    let (license, license_sha) =
+        checkout_license(&options.upstream_checkout, &options.package, &repo, rev)?;
+    let effective_signature = if options.infer_owned_string_signature {
+        let lib = options.upstream_checkout.join("src/lib.rs");
+        let meta = fs::symlink_metadata(&lib)?;
+        if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 512 * 1024 {
+            return Err(VerifiedRustError::Unsafe(
+                "bounded API inference requires a regular pinned upstream src/lib.rs of at most 512 KiB".into(),
+            ));
+        }
+        let upstream_source = fs::read_to_string(&lib)?;
+        Some(crate::api_discovery::infer_owned_string_target_signature(
+            &upstream_source,
+            &options.public_symbol,
+            &options.target_alias,
+        ).ok_or_else(|| VerifiedRustError::Unsafe(
+            "no unique supported public borrowed-string function in pinned upstream Git source".into(),
+        ))?)
+    } else {
+        options.target_signature.clone()
+    };
     let typed_bridge = crate::reviewed_upstream_adapter::reviewed_string_adapter(
         &format!("composer_git_{}", options.package.replace('-', "_")),
         &options.public_symbol,
         &options.target_alias,
-        options.target_signature.as_deref(),
+        effective_signature.as_deref(),
     )?;
-    let (license, license_sha) =
-        checkout_license(&options.upstream_checkout, &options.package, &repo, rev)?;
     let original = options.target_root.canonicalize()?;
     validate_contract_test(&original, &options.contract_test, &options.target_alias)?;
     let target_manifest = original.join("Cargo.toml");
@@ -416,7 +444,8 @@ pub fn verify_upstream_git(
             "target_contract": options.contract_test,
             "public_symbol": options.public_symbol,
             "target_alias": options.target_alias,
-            "target_signature": options.target_signature,
+            "target_signature": effective_signature,
+            "signature_inferred_from_pinned_source": options.infer_owned_string_signature,
             "adapter_kind": if typed_bridge.is_some() { "borrow_owned_strings_as_str" } else { "direct_reexport" },
             "offline_tests_passed": true,
             "network_disabled": true,
@@ -436,7 +465,8 @@ pub fn verify_upstream_git(
             package: options.package.clone(),
             public_symbol: options.public_symbol.clone(),
             target_alias: options.target_alias.clone(),
-            target_signature: options.target_signature.clone(),
+            target_signature: effective_signature.clone(),
+            inferred_owned_string_signature: options.infer_owned_string_signature,
             upstream_repository: repo.clone_url.clone(),
             upstream_commit: rev.clone(),
             lockfile_git_commit_verified: true,
@@ -476,6 +506,7 @@ mod tests {
             public_symbol: "jaro".into(),
             target_alias: "ported_jaro".into(),
             target_signature: None,
+            infer_owned_string_signature: false,
             contract_test: PathBuf::from("tests/contract.rs"),
             registry_cache: PathBuf::from("missing-registry"),
             git_cache: PathBuf::from("missing-git"),
