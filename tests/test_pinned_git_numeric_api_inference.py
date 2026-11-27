@@ -30,17 +30,29 @@ fn independently_verify_owned_string_jaro() {
 }
 """
 
+LEVENSHTEIN_CONTRACT = """use trigram::ported_levenshtein;
+#[test]
+fn independently_verify_levenshtein_not_optimal_string_alignment() {
+    assert_eq!(ported_levenshtein("".to_owned(), "".to_owned()), 0);
+    assert_eq!(ported_levenshtein("".to_owned(), "abc".to_owned()), 3);
+    assert_eq!(ported_levenshtein("kitten".to_owned(), "sitting".to_owned()), 3);
+    assert_eq!(ported_levenshtein("ab".to_owned(), "ba".to_owned()), 2);
+    assert_eq!(ported_levenshtein("same".to_owned(), "same".to_owned()), 0);
+}
+"""
+
 def cli(*args: str, require_success=True):
     return existing.cli(*args, require_success=require_success)
 
-def fixture(target: Path, root: Path, label: str, conflict=False):
+def fixture(target: Path, root: Path, label: str, conflict=False, contract=GOOD):
     work, _ = existing.make_target(target, root, label, conflict=conflict)
-    (work / CONTRACT).write_text(GOOD, encoding="utf-8")
+    (work / CONTRACT).write_text(contract, encoding="utf-8")
     before = [(work / path).read_bytes() for path in ("Cargo.toml", "src/lib.rs", CONTRACT)]
     return work, before
 
 def verify(target: Path, output: Path, upstream: Path, symbol="jaro",
-           sha=SOURCE_SHA, require_success=True, infer=True):
+           sha=SOURCE_SHA, require_success=True, infer=True,
+           alias="ported_jaro", typed_alias=False):
     args = [
         "verify-external-git-rust", str(target),
         "--output", str(output),
@@ -49,14 +61,14 @@ def verify(target: Path, output: Path, upstream: Path, symbol="jaro",
         "--upstream-commit", sha,
         "--package", "strsim",
         "--public-symbol", symbol,
-        "--target-alias", "ported_jaro",
+        "--target-alias", alias,
         "--contract-test", CONTRACT,
         "--registry-cache", str(existing.CACHE),
         "--git-cache", str(GIT_CACHE),
         "--license-reviewed",
     ]
     if infer:
-        args.append("--infer-owned-string-signature")
+        args.append("--infer-typed-signature" if typed_alias else "--infer-owned-string-signature")
     return cli(*args, require_success=require_success)
 
 def main():
@@ -124,11 +136,55 @@ def main():
         existing.assert_unchanged(work, before)
         print("PASS no-adapter type mismatch refused", flush=True)
 
+        # New held-out type: the unchanged upstream Levenshtein returns usize.
+        # The previous adapter only handled f32/f64/bool/fixed-width integers.
+        for n in range(1, 4):
+            work, before = fixture(
+                target, root, f"owned-usize-{n}", contract=LEVENSHTEIN_CONTRACT
+            )
+            out = root / f"published-levenshtein-{n}"
+            actual = json.loads(
+                verify(
+                    work, out, source, symbol="levenshtein",
+                    alias="ported_levenshtein", typed_alias=True,
+                ).stdout
+            )
+            assert actual["offline_tests_passed"] is True
+            assert actual["source_checkout_commit_verified"] is True
+            assert actual["lockfile_git_commit_verified"] is True
+            assert actual["target_signature"] == "ported_levenshtein(String,String)->usize"
+            adapter = (out / "src/lib.rs").read_text()
+            assert "pub fn ported_levenshtein(arg0: ::std::string::String, arg1: ::std::string::String) -> usize" in adapter
+            assert "composer_git_strsim::levenshtein(arg0.as_str(), arg1.as_str())" in adapter
+            evidence = json.loads((out / "composer-upstream-git-evidence.json").read_text())
+            assert evidence["inference_source_parameters"] == ["&str", "&str"]
+            assert evidence["adapter_kind"] == "borrow_owned_strings_as_str"
+            assert evidence["network_disabled"] is True
+            assert SOURCE_SHA in (out / "Cargo.lock").read_text()
+            existing.assert_unchanged(work, before)
+            print(f"PASS upstream Levenshtein usize API inference {n}/3", flush=True)
+
+        wrong_target, baseline = fixture(
+            target, root, "wrong-usize-semantics", contract=LEVENSHTEIN_CONTRACT
+        )
+        refused = root / "must-not-publish-osa-as-levenshtein"
+        wrong_result = verify(
+            wrong_target, refused, source, symbol="osa_distance",
+            alias="ported_levenshtein", typed_alias=True, require_success=False,
+        )
+        assert wrong_result.returncode != 0
+        assert "test result: FAILED" in wrong_result.stderr, wrong_result.stderr[-1800:]
+        assert not refused.exists()
+        existing.assert_unchanged(wrong_target, baseline)
+        print("PASS type-identical but semantically wrong distance algorithm rejected", flush=True)
+
         print("EVIDENCE_JSON " + json.dumps({
             "source": [SOURCE_REPO, SOURCE_SHA],
             "target": [TARGET_REPO, TARGET_SHA],
             "upstream_algorithm_reimplemented": False,
             "numeric_return_type_inferred_from_pinned_upstream_AST": True,
+            "usize_levenshtein_accepted_3_times": True,
+            "same_signature_wrong_distance_algorithm_rejected": True,
             "verified_runs": recorded,
             "wrong_semantics_rejected": True,
             "generic_source_rejected": True,
