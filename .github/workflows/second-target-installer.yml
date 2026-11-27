@@ -125,6 +125,7 @@ jobs:
           if ((Test-Path $installed) -or (Test-Path $registry)) {
             throw "Fresh runner unexpectedly already has Composer installed"
           }
+          New-Item -ItemType Directory -Force -Path (Split-Path $sentinel -Parent) | Out-Null
           Set-Content $sentinel -Value "Unrelated user data must remain untouched"
           $installProc = Start-Process -FilePath $setup -ArgumentList "/S" -Wait -PassThru
           if ($installProc.ExitCode -ne 0) {
