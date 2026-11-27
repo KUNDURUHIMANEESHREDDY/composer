@@ -5,6 +5,7 @@ mod apply;
 mod batch;
 mod compatibility;
 mod dependencies;
+mod multifile;
 mod verified;
 mod verify;
 mod wire;
