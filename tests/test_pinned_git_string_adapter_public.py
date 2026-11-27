@@ -128,6 +128,11 @@ def main():
             assert evidence["adapter_kind"] == "borrow_owned_strings_as_str"
             assert evidence["network_disabled"] is True
             assert "test result: ok" in evidence["log_tail"]
+            if os.environ.get("COMPOSER_VERIFIER_RUNTIME") == "runsc":
+                assert evidence["log_tail"].startswith("COMPOSER_DOCKER_RUNTIME=runsc\n"), (
+                    "requested gVisor runtime not recorded in verifier evidence"
+                )
+                print("PASS external gVisor runsc required by verified Git import", flush=True)
             assert SOURCE_SHA in (dest / "Cargo.lock").read_text()
             assert SOURCE_SHA in (dest / "Cargo.toml").read_text()
             impl = (dest / "src/lib.rs").read_text()
