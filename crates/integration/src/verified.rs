@@ -1148,6 +1148,99 @@ fn docker_build(
 mod tests {
     use super::*;
 
+    /// Unit-level constraint gate: this deliberately bypasses wiring because
+    /// the current source-import closure rejects external imports earlier.
+    /// A green Cargo test elsewhere does not prove incompatible versions agree.
+    #[test]
+    fn rejects_disjoint_semver_lockfile_in_dependent_target() {
+        let root = std::env::temp_dir().join(format!("composer-heldout-semver-{}", Uuid::new_v4()));
+        let capsule = root.join("capsule");
+        let target = root.join("target");
+        fs::create_dir_all(capsule.join("context/manifests")).unwrap();
+        fs::create_dir_all(capsule.join("source/src")).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        fs::write(
+            capsule.join("source/src/lib.rs"),
+            "use semver::Version;\npub fn parse_major(value: &str) -> u64 { Version::parse(value).map(|v| v.major).unwrap_or(0) }\n",
+        ).unwrap();
+        fs::write(
+            capsule.join("context/manifests/Cargo.toml"),
+            "[package]\nname='synthetic_source'\nversion='0.1.0'\n[dependencies]\nsemver='1'\n",
+        ).unwrap();
+        let target_manifest = target.join("Cargo.toml");
+        let target_lock = target.join("Cargo.lock");
+        let incompatible = "[package]\nname='synthetic_target'\nversion='0.1.0'\n[dependencies]\nsemver='=0.11.0'\n";
+        fs::write(&target_manifest, incompatible).unwrap();
+        fs::write(
+            &target_lock,
+            "version = 4\n[[package]]\nname = 'semver'\nversion = '0.11.0'\n",
+        ).unwrap();
+        let manifest = CapsuleManifest {
+            schema_version: 1,
+            capsule_id: "semver-fixture".into(),
+            capability_id: "semver".into(),
+            description: "Version conflict contract".into(),
+            created_at_unix: 0,
+            source_repository_url: None,
+            source_commit_sha: None,
+            source_tree_sha: None,
+            dependency_closure_strategy: "test".into(),
+            files: vec![
+                composer_intelligence::CapsuleFile {
+                    source_path: Some(PathBuf::from("Cargo.toml")),
+                    capsule_path: "context/manifests/Cargo.toml".into(),
+                    file_kind: "dependency_manifest".into(),
+                    size_bytes: 0,
+                    sha256: String::new(),
+                },
+                composer_intelligence::CapsuleFile {
+                    source_path: Some(PathBuf::from("src/lib.rs")),
+                    capsule_path: "source/src/lib.rs".into(),
+                    file_kind: "source".into(),
+                    size_bytes: 0,
+                    sha256: String::new(),
+                },
+            ],
+            included_source_files: vec![PathBuf::from("src/lib.rs")],
+            included_symbol_ids: vec![],
+            external_or_unresolved_imports: vec![],
+            unfollowed_symbol_references: vec![],
+            license_evidence_files: vec![],
+            license_review_required: true,
+            boundary_warnings: vec![],
+        };
+        let before_manifest = fs::read(&target_manifest).unwrap();
+        let before_lock = fs::read(&target_lock).unwrap();
+        let result = verify_locked_source_constraints(
+            &manifest, &capsule, &target_manifest, &target_lock,
+        );
+        match result {
+            Err(VerifiedRustError::Dependency(message)) => {
+                assert!(message.contains("incompatible with source"), "{message}");
+                assert!(message.contains("semver"), "{message}");
+            }
+            other => panic!("disjoint dependency constraints were not rejected: {other:?}"),
+        }
+        assert_eq!(fs::read(&target_manifest).unwrap(), before_manifest);
+        assert_eq!(fs::read(&target_lock).unwrap(), before_lock);
+
+        // Positive control: both source and target requirements admit 1.0.28.
+        fs::write(
+            &target_manifest,
+            "[package]\nname='synthetic_target'\nversion='0.1.0'\n[dependencies]\nsemver='=1.0.28'\n",
+        ).unwrap();
+        fs::write(
+            &target_lock,
+            "version = 4\n[[package]]\nname = 'semver'\nversion = '1.0.28'\n",
+        ).unwrap();
+        let reconciled = verify_locked_source_constraints(
+            &manifest, &capsule, &target_manifest, &target_lock,
+        ).unwrap();
+        assert_eq!(reconciled.len(), 1);
+        assert!(reconciled[0].contains("1.0.28"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn preserves_target_manifest_and_adds_only_matching_version_deps() {
         let root = std::env::temp_dir().join(format!("composer-deps-{}", Uuid::new_v4()));
