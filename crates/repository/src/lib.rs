@@ -115,7 +115,7 @@ pub fn acquire_and_inspect(
         Uuid::new_v4()
     ));
 
-    let clone_output = git_command()
+    let clone_output = hardened_git_command()
         .args([
             "-c",
             "protocol.ext.allow=never",
@@ -164,7 +164,10 @@ pub fn acquire_and_inspect(
     })
 }
 
-fn git_command() -> Command {
+/// Construct host Git with inherited/global configuration and hook-style helpers disabled.
+/// Callers reading an unrelated URL should also run outside an untrusted checkout
+/// to avoid local `.git/config` settings inherited from the current directory.
+pub fn hardened_git_command() -> Command {
     let mut command = Command::new("git");
     // Highest-precedence native Git options block checkout-local fsmonitor
     // execution and unnecessary index caching in all host Git invocations.
@@ -185,7 +188,18 @@ fn git_command() -> Command {
         .env_remove("GIT_CONFIG_PARAMETERS")
         .env_remove("GIT_CONFIG_COUNT")
         .env_remove("GIT_EXTERNAL_DIFF")
-        .env_remove("GIT_TEMPLATE_DIR");
+        .env_remove("GIT_TEMPLATE_DIR")
+        // Parent-process worktree/object-directory overrides must not redirect
+        // a reviewed source checkout to another untrusted repository.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_CEILING_DIRECTORIES")
+        .env_remove("GIT_SSH")
+        .env_remove("GIT_SSH_COMMAND");
 
     #[cfg(windows)]
     command.env("GIT_CONFIG_GLOBAL", "NUL");
@@ -201,7 +215,7 @@ fn git_output(
     arguments: &[&str],
     command_name: &'static str,
 ) -> Result<String, RepositoryError> {
-    let output = git_command()
+    let output = hardened_git_command()
         .arg("-C")
         .arg(repository_path)
         .args(arguments)
@@ -377,6 +391,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hardened_git_command_blocks_inherited_host_execution_settings() {
+        use std::ffi::OsStr;
+        let command = hardened_git_command();
+        for name in [
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_EXTERNAL_DIFF",
+            "GIT_TEMPLATE_DIR",
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_CEILING_DIRECTORIES",
+            "GIT_SSH_COMMAND",
+        ] {
+            let entry = command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new(name))
+                .unwrap_or_else(|| panic!("{name} has no explicit environment policy"));
+            assert!(entry.1.is_none(), "{name} was not removed");
+        }
+        let allow = command
+            .get_envs()
+            .find(|(key, _)| *key == OsStr::new("GIT_ALLOW_PROTOCOL"))
+            .and_then(|(_, value)| value);
+        assert_eq!(allow, Some(OsStr::new("https")));
+        let args = command
+            .get_args()
+            .map(|item| item.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["-c", "core.fsmonitor=false"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["-c", "core.untrackedCache=false"])
+        );
+    }
+
+    #[test]
     fn host_git_metadata_overrides_checkout_fsmonitor_cross_platform() {
         let base = std::env::temp_dir().join(format!("composer-host-git-{}", Uuid::new_v4()));
         fs::create_dir_all(&base).unwrap();
@@ -394,7 +451,7 @@ mod tests {
             .output()
             .unwrap();
         assert!(config.status.success());
-        let checked = git_command()
+        let checked = hardened_git_command()
             .arg("-C")
             .arg(&base)
             .args(["config", "--get", "core.fsmonitor"])

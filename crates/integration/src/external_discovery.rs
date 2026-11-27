@@ -229,20 +229,41 @@ fn public_symbol_from_sources(
 }
 
 fn repository_head_sha(github: &GitHubRepository) -> Option<String> {
-    let mut command = Command::new("git");
-    command
-        .args(["-c", "protocol.ext.allow=never", "ls-remote", "--"])
-        .arg(&github.clone_url)
-        .arg("HEAD")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_ASKPASS", "");
-    let response = bounded_command(&mut command, "git ls-remote").ok()?;
+    // Running Git in the caller's checkout can load checkout-local URL
+    // rewrites, even if global and environment-injected config is blocked.
+    // Resolve public GitHub metadata from a fresh, empty directory instead.
+    let scratch =
+        std::env::temp_dir().join(format!("composer-git-discovery-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&scratch).ok()?;
+    let mut command = isolated_repository_head_command(github, &scratch);
+    let result = bounded_command(&mut command, "git ls-remote");
+    // Always remove the empty temporary directory, even on metadata failures.
+    let _ = fs::remove_dir(&scratch);
+    let response = result.ok()?;
     let sha = response.split_whitespace().next()?;
     if sha.len() == 40 && sha.bytes().all(|value| value.is_ascii_hexdigit()) {
         Some(sha.to_owned())
     } else {
         None
     }
+}
+
+/// Use the existing hardened Git command with an isolated working directory.
+/// A caller's checkout-local .git/config must never rewrite public URL lookups.
+fn isolated_repository_head_command(github: &GitHubRepository, scratch: &Path) -> Command {
+    let mut command = composer_repository::hardened_git_command();
+    command
+        .current_dir(scratch)
+        // Do not ascend into a caller-controlled parent repository, even
+        // when the TEMP directory itself is nested inside a Git checkout.
+        .env(
+            "GIT_CEILING_DIRECTORIES",
+            scratch.parent().unwrap_or(scratch),
+        )
+        .args(["-c", "protocol.ext.allow=never", "ls-remote", "--"])
+        .arg(&github.clone_url)
+        .arg("HEAD");
+    command
 }
 
 /// Search for existing capabilities by delegating to Cargo search/info.
@@ -363,6 +384,49 @@ pub fn discover_external_rust(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_uses_isolated_git_metadata_command() {
+        use std::ffi::OsStr;
+        let github = GitHubRepository::parse("https://github.com/example/project").unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "composer-discovery-command-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let command = isolated_repository_head_command(&github, &directory);
+        assert_eq!(command.get_current_dir(), Some(directory.as_path()));
+        let args = command
+            .get_args()
+            .map(|item| item.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["-c", "protocol.ext.allow=never"])
+        );
+        assert!(args.ends_with(&[
+            "ls-remote".to_string(),
+            "--".to_string(),
+            "https://github.com/example/project.git".to_string(),
+            "HEAD".to_string(),
+        ]));
+        let transport = command
+            .get_envs()
+            .find(|(name, _)| *name == OsStr::new("GIT_ALLOW_PROTOCOL"))
+            .and_then(|(_, value)| value);
+        assert_eq!(transport, Some(OsStr::new("https")));
+        let ceiling = command
+            .get_envs()
+            .find(|(name, _)| *name == OsStr::new("GIT_CEILING_DIRECTORIES"))
+            .and_then(|(_, value)| value);
+        assert_eq!(ceiling, directory.parent().map(Path::as_os_str));
+        for name in ["GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_DIR"] {
+            assert!(
+                command
+                    .get_envs()
+                    .any(|(key, value)| { key == OsStr::new(name) && value.is_none() })
+            );
+        }
+    }
 
     #[test]
     fn cargo_search_output_parses_exact_safe_names() {
