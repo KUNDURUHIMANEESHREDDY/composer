@@ -95,3 +95,6 @@ try {
 } finally {
     Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
 }
+# The mock deliberately sets LASTEXITCODE=1 for a negative control. Clear it
+# only after all assertions pass to avoid a false failing pwsh job exit code.
+$global:LASTEXITCODE = 0
