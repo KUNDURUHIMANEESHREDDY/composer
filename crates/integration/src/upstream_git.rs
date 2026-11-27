@@ -58,6 +58,12 @@ pub struct UpstreamGitResult {
     pub lockfile_git_commit_verified: bool,
     pub source_checkout_commit_verified: bool,
     pub source_license_sha256: String,
+    /// Immutable Git tree object of the independently reviewed upstream commit.
+    pub reviewed_source_tree_oid: String,
+    /// Blob object ID independently checked against the clean checkout.
+    pub reviewed_manifest_blob_oid: String,
+    pub reviewed_license_blob_oid: String,
+    pub source_git_objects_verified: bool,
     pub original_target_unchanged: bool,
     pub offline_tests_passed: bool,
     pub evidence_path: PathBuf,
@@ -116,12 +122,43 @@ fn git_read(path: &Path, args: &[&str]) -> Result<String, VerifiedRustError> {
         .map_err(|_| VerifiedRustError::Unsafe("non-UTF8 Git metadata".into()))
 }
 
+#[derive(Debug, Clone)]
+struct ReviewedSourceEvidence {
+    license_bytes: Vec<u8>,
+    license_sha256: String,
+    tree_oid: String,
+    manifest_blob_oid: String,
+    license_blob_oid: String,
+    license_path: String,
+}
+
+fn tracked_blob_matches(
+    checkout: &Path,
+    revision: &str,
+    relative_path: &str,
+) -> Result<String, VerifiedRustError> {
+    // Do not accept a path whose checkout bytes differ from the Git tree.
+    // Git (not custom hash logic) computes and verifies the stored blob ID.
+    let git_path = format!("{revision}:{relative_path}");
+    let expected = git_read(checkout, &["rev-parse", "--verify", &git_path])?;
+    let actual = git_read(checkout, &["hash-object", "--no-filters", "--", relative_path])?;
+    if expected.len() != 40
+        || expected != actual
+        || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(VerifiedRustError::Unsafe(format!(
+            "reviewed source file {relative_path} differs from the pinned Git object"
+        )));
+    }
+    Ok(expected)
+}
+
 fn checkout_license(
     checkout: &Path,
     package: &str,
     repo: &GitHubRepository,
     rev: &str,
-) -> Result<(Vec<u8>, String), VerifiedRustError> {
+) -> Result<ReviewedSourceEvidence, VerifiedRustError> {
     let meta = fs::symlink_metadata(checkout)?;
     if !meta.is_dir() || meta.file_type().is_symlink() {
         return Err(VerifiedRustError::Unsafe(
@@ -174,6 +211,13 @@ fn checkout_license(
             "source checkout package name does not match reviewed source".into(),
         ));
     }
+    // Check the actual on-disk manifest against the immutable Git object,
+    // not only the ref name and worktree "clean" status.
+    let tree_oid = git_read(checkout, &["rev-parse", "--verify", "HEAD^{tree}"])?;
+    if tree_oid.len() != 40 || !tree_oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(VerifiedRustError::Unsafe("invalid upstream Git tree object".into()));
+    }
+    let manifest_blob_oid = tracked_blob_matches(checkout, rev, "Cargo.toml")?;
     // Unpublished Git-only libraries often supply a LICENSE file without
     // declaring the license in Cargo.toml. Keep the explicit review gate and
     // hash/copy the committed LICENSE file rather than inventing a declaration.
@@ -199,7 +243,15 @@ fn checkout_license(
         }
         let bytes = fs::read(&file)?;
         let checksum = format!("{:x}", Sha256::digest(&bytes));
-        return Ok((bytes, checksum));
+        let license_blob_oid = tracked_blob_matches(checkout, rev, name)?;
+        return Ok(ReviewedSourceEvidence {
+            license_bytes: bytes,
+            license_sha256: checksum,
+            tree_oid,
+            manifest_blob_oid,
+            license_blob_oid,
+            license_path: name.to_owned(),
+        });
     }
     Err(VerifiedRustError::Unsafe(
         "source checkout has no regular license evidence file".into(),
@@ -275,7 +327,7 @@ pub fn verify_upstream_git(
             "Git SHA, package, public symbol or target alias invalid".into(),
         ));
     }
-    let (license, license_sha) =
+    let reviewed =
         checkout_license(&options.upstream_checkout, &options.package, &repo, rev)?;
     let original = options.target_root.canonicalize()?;
     validate_contract_test(&original, &options.contract_test, &options.target_alias)?;
@@ -385,7 +437,7 @@ pub fn verify_upstream_git(
         let licenses = staged.join("third_party_licenses");
         fs::create_dir_all(&licenses)?;
         let notice = format!("{}-git-license.txt", options.package);
-        fs::write(licenses.join(&notice), &license)?;
+        fs::write(licenses.join(&notice), &reviewed.license_bytes)?;
         let evidence = serde_json::json!({
             "schema_version": 1,
             "mode": "reuse_pinned_git_dependency",
@@ -394,8 +446,13 @@ pub fn verify_upstream_git(
             "lockfile_source": source,
             "source_checkout_commit_verified": true,
             "cargo_lock_commit_verified": true,
-            "license_sha256": license_sha,
+            "license_sha256": reviewed.license_sha256,
             "license_notice": format!("third_party_licenses/{notice}"),
+            "reviewed_license_source_path": reviewed.license_path,
+            "reviewed_source_tree_oid": reviewed.tree_oid,
+            "reviewed_manifest_blob_oid": reviewed.manifest_blob_oid,
+            "reviewed_license_blob_oid": reviewed.license_blob_oid,
+            "source_git_objects_verified": true,
             "review_attested": true,
             "target_contract": options.contract_test,
             "public_symbol": options.public_symbol,
@@ -422,7 +479,11 @@ pub fn verify_upstream_git(
             upstream_commit: rev.clone(),
             lockfile_git_commit_verified: true,
             source_checkout_commit_verified: true,
-            source_license_sha256: license_sha.clone(),
+            source_license_sha256: reviewed.license_sha256.clone(),
+            reviewed_source_tree_oid: reviewed.tree_oid.clone(),
+            reviewed_manifest_blob_oid: reviewed.manifest_blob_oid.clone(),
+            reviewed_license_blob_oid: reviewed.license_blob_oid.clone(),
+            source_git_objects_verified: true,
             original_target_unchanged: true,
             offline_tests_passed: true,
             evidence_path: output.join(GIT_EVIDENCE),
