@@ -255,7 +255,10 @@ fn parse_function(node: Node<'_>, source: &str, file: &Path, module: &str) -> Op
             let (variable, ty) = param.trim().split_once(':')?;
             // Mutation of a local binding does not change the public type.
             // Accept only a simple optional `mut` prefix, never destructuring.
-            let binding = variable.trim().strip_prefix("mut ").unwrap_or(variable.trim());
+            let binding = variable
+                .trim()
+                .strip_prefix("mut ")
+                .unwrap_or(variable.trim());
             if !identifier(binding) || !allowed_type(ty.trim()) {
                 return None;
             }
@@ -449,7 +452,8 @@ pub async fn delayed(x: u32) -> u32 { todo!() }
         assert_eq!(functions.len(), 3);
         let mutable = scan_public_functions(
             "pub fn fast_gcd(mut a: i64, mut b: i64) -> i64 { a + b }",
-            Path::new("src/math.rs"), ""
+            Path::new("src/math.rs"),
+            "",
         );
         assert_eq!(mutable.len(), 1);
         assert_eq!(mutable[0].parameters, vec!["i64", "i64"]);
