@@ -51,13 +51,34 @@ def prefetch_cargo(target: Path, base: Path) -> Path:
         text += "\n[dependencies]\n" + dependency + "\n"
     manifest.write_text(text, encoding="utf-8")
     # Use Cargo's own dependency solver only in a disposable prefetch copy.
-    stale = prefetch / "Cargo.lock"
-    if stale.exists():
-        stale.unlink()
+    # Preserve target-owned frozen dependency versions. Cargo incrementally
+    # updates its existing lockfile for the newly reviewed Git capability;
+    # deleting the lockfile unexpectedly upgrades upstream dependencies and
+    # can break unrelated tests (observed: Tokio 1.32 -> 1.54 in mini-redis).
+    pinned_lock = prefetch / "Cargo.lock"
+    original_lock_bytes = pinned_lock.read_bytes() if pinned_lock.exists() else None
     run("cargo", "fetch", "--manifest-path", str(manifest),
         "--target", "x86_64-unknown-linux-gnu", timeout=240)
     lock = prefetch / "Cargo.lock"
     assert lock.is_file() and CACHE.is_dir() and GIT_CACHE.is_dir()
+    if TARGET == "tokio-rs/mini-redis":
+        import tomllib
+        assert original_lock_bytes is not None, "mini-redis original lockfile missing"
+        old_versions = {
+            item["name"]: item["version"]
+            for item in tomllib.loads(original_lock_bytes.decode())["package"]
+            if item["name"] == "tokio"
+        }
+        updated_versions = {
+            item["name"]: item["version"]
+            for item in tomllib.loads(lock.read_text())["package"]
+            if item["name"] == "tokio"
+        }
+        assert old_versions == updated_versions, (
+            "mini-redis upstream Tokio version unexpectedly changed",
+            old_versions, updated_versions
+        )
+        print("PASS original pinned Tokio dependency version preserved", flush=True)
     return lock
 
 
@@ -150,6 +171,7 @@ def main():
             assert evidence["docker_image_reference"] == image
             assert evidence["docker_cpu_limit"] == int(os.getenv("COMPOSER_VERIFIER_CPUS", "1"))
             assert evidence["docker_all_features"] is (os.getenv("COMPOSER_VERIFIER_FEATURES", "default") == "all")
+            assert evidence["docker_rustflags_profile"] == os.getenv("COMPOSER_VERIFIER_RUSTFLAGS_PROFILE", "default")
             assert evidence["cargo_workspace_root_package"] is EXPECT_WORKSPACE
             assert evidence["verification_scope"] == expected_scope
             assert evidence["docker_memory_limit_mb"] == int(os.getenv("COMPOSER_VERIFIER_MEMORY_MB", "1024"))

@@ -10,6 +10,7 @@ use std::{
 
 use composer_intelligence::CapsuleManifest;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -615,7 +616,20 @@ fn copy_tree(
                 item.extension().and_then(|ext| ext.to_str()),
                 Some("rs" | "json" | "toml" | "txt" | "md" | "sql" | "html")
             );
-            if allowed {
+            // Exactly one known, public, immutable upstream test certificate
+            // is needed by smol's full-scope example compilation. Never copy
+            // arbitrary .pfx files, which could contain private user secrets.
+            let reviewed_fixture = name.to_str() == Some("identity.pfx")
+                && source
+                    .file_name()
+                    .is_some_and(|n| n.to_str() == Some("examples"))
+                && {
+                    let data = fs::read(&item)?;
+                    data.len() == 2421
+                        && format!("{:x}", Sha256::digest(&data))
+                            == "08895e488582ed2f75d17e8b1c56d2c9cd8989c344cd48bdce93c88cfec1bd35"
+                };
+            if allowed || reviewed_fixture {
                 copy_regular(&item, &destination.join(name), files, bytes)?;
             }
         } else {
@@ -1217,6 +1231,53 @@ fn bounded_verifier_features_and_cpus() {
     assert!(validated_verifier_cpus(Some("4")).is_err());
 }
 
+fn validated_verifier_rustflags(
+    input: Option<&str>,
+) -> Result<(&'static str, &'static str), VerifiedRustError> {
+    match input {
+        None | Some("default") => Ok(("default", "-C debuginfo=0")),
+        Some("hyper-unstable") => Ok((
+            "hyper-unstable",
+            "-C debuginfo=0 --cfg hyper_unstable_tracing --cfg hyper_unstable_ffi",
+        )),
+        _ => Err(VerifiedRustError::Unsafe(
+            "unsupported COMPOSER_VERIFIER_RUSTFLAGS_PROFILE".into(),
+        )),
+    }
+}
+
+pub(crate) fn selected_verifier_rustflags_profile() -> Result<&'static str, VerifiedRustError> {
+    match std::env::var("COMPOSER_VERIFIER_RUSTFLAGS_PROFILE") {
+        Ok(value) => Ok(validated_verifier_rustflags(Some(&value))?.0),
+        Err(std::env::VarError::NotPresent) => Ok(validated_verifier_rustflags(None)?.0),
+        Err(_) => Err(VerifiedRustError::Unsafe(
+            "invalid COMPOSER_VERIFIER_RUSTFLAGS_PROFILE".into(),
+        )),
+    }
+}
+
+fn selected_verifier_rustflags() -> Result<&'static str, VerifiedRustError> {
+    match std::env::var("COMPOSER_VERIFIER_RUSTFLAGS_PROFILE") {
+        Ok(value) => Ok(validated_verifier_rustflags(Some(&value))?.1),
+        Err(std::env::VarError::NotPresent) => Ok(validated_verifier_rustflags(None)?.1),
+        Err(_) => Err(VerifiedRustError::Unsafe(
+            "invalid COMPOSER_VERIFIER_RUSTFLAGS_PROFILE".into(),
+        )),
+    }
+}
+
+#[test]
+fn verifier_rustflags_are_bounded() {
+    assert_eq!(validated_verifier_rustflags(None).unwrap().0, "default");
+    assert!(validated_verifier_rustflags(Some("--cfg malicious")).is_err());
+    assert!(
+        validated_verifier_rustflags(Some("hyper-unstable"))
+            .unwrap()
+            .1
+            .contains("hyper_unstable_ffi")
+    );
+}
+
 fn docker_build_internal(
     staged: &Path,
     results: &Path,
@@ -1249,6 +1310,7 @@ fn docker_build_internal(
     let memory_mb = selected_verifier_memory_mb()?;
     let memory_limit = format!("--memory={memory_mb}m");
     let cpu_limit = format!("--cpus={}", selected_verifier_cpus()?);
+    let rustflags_arg = format!("--env=RUSTFLAGS={}", selected_verifier_rustflags()?);
     let work_tmpfs = format!("--tmpfs=/work:rw,nosuid,nodev,exec,mode=1777,size={memory_mb}m");
     let name = format!("composer-verify-{}", Uuid::new_v4().simple());
     let mut cmd = Command::new("docker");
@@ -1278,7 +1340,7 @@ fn docker_build_internal(
         "--env=CARGO_HOME=/tmp/cargo",
         "--env=CARGO_NET_OFFLINE=true",
         "--env=CARGO_BUILD_JOBS=1",
-        "--env=RUSTFLAGS=-C debuginfo=0",
+        &rustflags_arg,
         "--mount",
         &mount_arg(staged, "/input", true)?,
         "--mount",

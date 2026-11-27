@@ -25,41 +25,49 @@ jobs:
       matrix:
         include:
           - case: bytes
+            rustflags_profile: default
             toolchain: nightly-2026-11-25
             features: default
             cpus: 1
             repository: tokio-rs/bytes
           - case: serde-json
+            rustflags_profile: default
             toolchain: stable
             features: default
             cpus: 1
             repository: serde-rs/json
           - case: hashbrown
+            rustflags_profile: default
             toolchain: stable
             features: default
             cpus: 1
             repository: rust-lang/hashbrown
           - case: httparse
+            rustflags_profile: default
             toolchain: stable
             features: default
             cpus: 1
             repository: seanmonstar/httparse
           - case: rand
+            rustflags_profile: default
             toolchain: stable
             features: default
             cpus: 1
             repository: rust-random/rand
           - case: smol
+            rustflags_profile: default
             toolchain: stable-system-libs
             features: default
             cpus: 1
             repository: smol-rs/smol
           - case: hyper
+            rustflags_profile: hyper-unstable
             toolchain: stable
             features: all
             cpus: 2
             repository: hyperium/hyper
           - case: mini-redis
+            rustflags_profile: default
             toolchain: stable
             features: default
             cpus: 2
@@ -86,6 +94,7 @@ jobs:
           COMPOSER_VERIFIER_TOOLCHAIN: ${{ matrix.toolchain }}
           COMPOSER_VERIFIER_FEATURES: ${{ matrix.features }}
           COMPOSER_VERIFIER_CPUS: ${{ matrix.cpus }}
+          COMPOSER_VERIFIER_RUSTFLAGS_PROFILE: ${{ matrix.rustflags_profile }}
         run: |
           set -euo pipefail
           python3 -u tests/test_heldout30_functional_standalone.py \
