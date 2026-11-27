@@ -28,6 +28,7 @@ def main():
     repo, crate = CASES[case]
     suite.TARGET = repo
     suite.EXPECT_WORKSPACE = True
+    suite.EXPLICIT_CONTRACT_TEST = case == "regex"
     suite.INDEPENDENT_ORACLE = suite.INDEPENDENT_ORACLE.replace(
         "use anyhow::ported_totient;", f"use {crate}::ported_totient;"
     )

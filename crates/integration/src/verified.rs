@@ -619,16 +619,25 @@ fn copy_tree(
             // Exactly one known, public, immutable upstream test certificate
             // is needed by smol's full-scope example compilation. Never copy
             // arbitrary .pfx files, which could contain private user secrets.
-            let reviewed_fixture = name.to_str() == Some("identity.pfx")
-                && source
+            let expected_fixture = match name.to_str() {
+                Some("identity.pfx") => Some((
+                    2421,
+                    "08895e488582ed2f75d17e8b1c56d2c9cd8989c344cd48bdce93c88cfec1bd35",
+                )),
+                Some("certificate.pem") => Some((
+                    1204,
+                    "7a5c3f70fa9ad09b631709cbcecbc037794c1e69e0d6507b1d29a7078c55f84c",
+                )),
+                _ => None,
+            };
+            let reviewed_fixture = expected_fixture.is_some_and(|(len, digest)| {
+                source
                     .file_name()
                     .is_some_and(|n| n.to_str() == Some("examples"))
-                && {
-                    let data = fs::read(&item)?;
-                    data.len() == 2421
-                        && format!("{:x}", Sha256::digest(&data))
-                            == "08895e488582ed2f75d17e8b1c56d2c9cd8989c344cd48bdce93c88cfec1bd35"
-                };
+                    && fs::read(&item).is_ok_and(|data| {
+                        data.len() == len && format!("{:x}", Sha256::digest(&data)) == digest
+                    })
+            });
             if allowed || reviewed_fixture {
                 copy_regular(&item, &destination.join(name), files, bytes)?;
             }

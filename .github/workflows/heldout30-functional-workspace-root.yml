@@ -25,34 +25,53 @@ jobs:
       matrix:
         include:
           - case: regex
+            toolchain: stable
             repository: rust-lang/regex
           - case: rayon
+            toolchain: stable
             repository: rayon-rs/rayon
           - case: http
+            toolchain: stable
             repository: hyperium/http
           - case: clap
+            toolchain: stable
             repository: clap-rs/clap
           - case: indexmap
+            toolchain: nightly-2026-11-25
             repository: bluss/indexmap
           - case: walkdir
+            toolchain: stable
             repository: BurntSushi/walkdir
           - case: syn
+            toolchain: stable
             repository: dtolnay/syn
           - case: uuid
+            toolchain: nightly-2026-11-25
             repository: uuid-rs/uuid
           - case: crossbeam
+            toolchain: stable
             repository: crossbeam-rs/crossbeam
           - case: thiserror
+            toolchain: stable
             repository: dtolnay/thiserror
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Preload digest-pinned stable Docker verifier
-        run: bash scripts/prefetch-pinned-rust-verifier.sh
+        shell: bash
+        run: |
+          set -euo pipefail
+          case '${{ matrix.toolchain }}' in
+            stable) bash scripts/prefetch-pinned-rust-verifier.sh ;;
+            nightly-2026-11-25)
+              docker pull --platform=linux/amd64 docker.io/rustlang/rust@sha256:eb59a92b7f3abf22b62141998ad2f2b477425ccd2f796a1dd87e79bc78beccab ;;
+            *) exit 1 ;;
+          esac
       - name: Test root package three times and reject wrong implementation
         shell: bash
         env:
           COMPOSER_VERIFIER_MEMORY_MB: '4096'
+          COMPOSER_VERIFIER_TOOLCHAIN: ${{ matrix.toolchain }}
         run: |
           set -euo pipefail
           python3 -u tests/test_heldout30_functional_workspace_root.py \

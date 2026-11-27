@@ -22,6 +22,7 @@ TARGET = "dtolnay/anyhow"
 CONTRACT_FOCUSED = False
 PROVE_FULL_TARGET_FAILURE = False
 EXPECT_WORKSPACE = False
+EXPLICIT_CONTRACT_TEST = False
 CONTRACT = "tests/composer_heldout30_totient_contract.rs"
 INDEPENDENT_ORACLE = """use anyhow::ported_totient;
 #[test]
@@ -57,8 +58,28 @@ def prefetch_cargo(target: Path, base: Path) -> Path:
     # can break unrelated tests (observed: Tokio 1.32 -> 1.54 in mini-redis).
     pinned_lock = prefetch / "Cargo.lock"
     original_lock_bytes = pinned_lock.read_bytes() if pinned_lock.exists() else None
-    run("cargo", "fetch", "--manifest-path", str(manifest),
-        "--target", "x86_64-unknown-linux-gnu", timeout=240)
+    fetch_args = (
+        "cargo", "fetch", "--manifest-path", str(manifest),
+        "--target", "x86_64-unknown-linux-gnu"
+    )
+    first_fetch = run(*fetch_args, timeout=240, require_success=False)
+    if first_fetch.returncode != 0:
+        # Pinpointed incompatibility: mini-redis locks libc 0.2.153, whereas
+        # the reviewed upstream source requires >=0.2.154 via getrandom.
+        # Use Cargo's official targeted solver to update ONLY the conflicting
+        # library. Preserve the original pinned Tokio version and run all tests.
+        if not (
+            TARGET == "tokio-rs/mini-redis"
+            and original_lock_bytes is not None
+            and "failed to select a version for `libc`" in first_fetch.stderr
+            and "previously selected package `libc v0.2.153`" in first_fetch.stderr
+        ):
+            raise RuntimeError("Cargo fetch failed without an approved exact conflict: "
+                               + first_fetch.stderr[-3200:])
+        run("cargo", "update", "--manifest-path", str(manifest),
+            "--package", "libc", "--precise", "0.2.191", timeout=240)
+        run(*fetch_args, timeout=240)
+        print("COMPOSER_DEPENDENCY_RECOVERY: libc 0.2.153 -> 0.2.191 via Cargo", flush=True)
     lock = prefetch / "Cargo.lock"
     assert lock.is_file() and CACHE.is_dir() and GIT_CACHE.is_dir()
     if TARGET == "tokio-rs/mini-redis":
@@ -87,6 +108,10 @@ def target_copy(original: Path, base: Path, label: str, lock: Path):
     shutil.copytree(original, working, ignore=shutil.ignore_patterns(".git"))
     (working / "tests").mkdir(exist_ok=True)
     (working / CONTRACT).write_text(INDEPENDENT_ORACLE, encoding="utf-8")
+    if EXPLICIT_CONTRACT_TEST:
+        manifest = working / "Cargo.toml"
+        with manifest.open("a", encoding="utf-8") as file:
+            file.write("\n[[test]]\nname = 'composer_heldout30_totient_contract'\npath = 'tests/composer_heldout30_totient_contract.rs'\n")
     shutil.copy2(lock, working / "Cargo.lock")
     originals = {name:(working/name).read_bytes() for name in (
         "Cargo.toml","Cargo.lock","src/lib.rs",CONTRACT

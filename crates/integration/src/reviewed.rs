@@ -77,10 +77,28 @@ pub(crate) fn validate_contract_test(
         .and_then(toml::Value::as_bool)
         == Some(false)
     {
-        return Err(VerifiedRustError::Unsafe(
-            "target disables automatic integration tests; contract test not guaranteed to execute"
-                .into(),
-        ));
+        // Cargo will run explicitly declared [[test]] targets even when
+        // automatic test discovery is off. Demand an exact registration;
+        // never accept merely dropping a .rs file in tests/.
+        let contract_name = test.file_stem().and_then(|s| s.to_str());
+        let contract_path = test.to_str().map(|s| s.replace('\\', "/"));
+        let declared = cargo
+            .get("test")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|targets| {
+                targets.iter().any(|entry| {
+                    entry.get("name").and_then(toml::Value::as_str) == contract_name
+                        && entry.get("path").and_then(toml::Value::as_str)
+                            == contract_path.as_deref()
+                        && entry.get("harness").and_then(toml::Value::as_bool) != Some(false)
+                })
+            });
+        if !declared {
+            return Err(VerifiedRustError::Unsafe(
+                "autotests=false requires an exact explicit [[test]] registration for the contract"
+                    .into(),
+            ));
+        }
     }
     let test_dir = target.join("tests");
     let dir = fs::symlink_metadata(&test_dir)?;
@@ -459,6 +477,11 @@ mod tests {
         )
         .unwrap();
         assert!(validate_contract_test(&root, Path::new("tests/contract.rs"), "wanted").is_err());
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='demo'\nversion='0.1.0'\nautotests=false\n[[test]]\nname='contract'\npath='tests/contract.rs'\n",
+        ).unwrap();
+        assert!(validate_contract_test(&root, Path::new("tests/contract.rs"), "wanted").is_ok());
         fs::write(root.join("Cargo.toml"), original_manifest).unwrap();
         for path in ["../escape.rs", "tests/../../escape.rs", "src/lib.rs"] {
             assert!(validate_contract_test(&root, Path::new(path), "wanted").is_err());

@@ -62,7 +62,7 @@ jobs:
             repository: smol-rs/smol
           - case: hyper
             rustflags_profile: hyper-unstable
-            toolchain: stable
+            toolchain: nightly-2026-11-25
             features: all
             cpus: 2
             repository: hyperium/hyper
