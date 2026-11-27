@@ -36,9 +36,21 @@ pub fn transliterate(arg0: String) -> String {
 }
 ```
 
-The inference reads `src/lib.rs` from an exact Git commit verified against the original clean public GitHub checkout. It accepts at most 512 KiB of regular non-symlink source code, scans the public root-level Rust AST using the **preexisting Tree-sitter parser**, requires exactly one eligible function, 1-4 borrowed `&str` arguments, and a `String` result. The caller must explicitly choose the target-facing name and request an owned-string adapter. It refuses unsupported types, methods, modules, generics, malformed syntax, ambiguity, mismatched Git SHA, and simultaneous explicit and inferred signature flags. It never executes untrusted source during inference.
+The inference reads `src/lib.rs` from an exact Git commit verified against the original clean public GitHub checkout. It accepts at most 512 KiB of regular non-symlink source code, scans the public root-level Rust AST using the **preexisting Tree-sitter parser**, requires exactly one eligible function, 1–4 borrowed `&str` arguments, and an explicitly supported `String`, `bool`, or numeric scalar result (`f32`, `f64`, `u8`–`u64`, `i8`–`i64`). No conversions of result values are invented. The caller must explicitly choose the target-facing name and request an owned-string adapter. It refuses unsupported types, methods, modules, generics, malformed syntax, ambiguity, mismatched Git SHA, and simultaneous explicit and inferred signature flags. It never executes untrusted source during inference.
 
 The target-owned behavior contract and license review remain mandatory. Compiler success alone is not accepted; Composer tests the actual source and staged target in its restricted offline Docker verifier (optionally using pinned upstream gVisor runsc) and validates the Cargo.lock Git revision before publishing. Existing verified output records the inferred signature and an inference flag.
+
+## Numeric and predicate output reuse
+
+The exact same upstream-lookup and compiler-checked wrapper also supports a scalar return. For example, the independent MIT source `rapidfuzz/strsim-rs` exports `pub fn jaro(a: &str, b: &str) -> f64`. With an explicit reviewed source symbol `jaro`, target alias `ported_jaro`, and `--infer-owned-string-signature`, Composer infers:
+
+```rust
+pub fn ported_jaro(arg0: String, arg1: String) -> f64 {
+    composer_git_strsim::jaro(arg0.as_str(), arg1.as_str())
+}
+```
+
+It never implements Jaro internally. `tests/test_pinned_git_numeric_api_inference.py` checks three independent transfers into unrelated `ijt/trigram`, including coexistence with an older dependency version. A type-compatible but semantically different upstream `jaro_winkler` must fail target-owned Jaro assertions. Generic source APIs and missing adapters must also fail without publication. Static type inference cannot determine whether `jaro` is the intended behavior: the source name, reviewed Git commit, license, and expected behaviors remain caller-supplied.
 
 ## Proof and limits
 
