@@ -8,6 +8,7 @@ on:
     paths:
       - .github/workflows/heldout30-functional-anyhow.yml
       - tests/test_heldout30_functional_anyhow.py
+      - tests/test_heldout30_functional_coverage.py
       - tests/heldout30_pins.json
       - crates/integration/**
       - apps/cli/**
@@ -23,6 +24,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned upstream
+      - name: Audit all 30 frozen targets have assigned functional acceptance jobs
+        run: python3 tests/test_heldout30_functional_coverage.py
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # pinned upstream
       - name: Prepare existing network-isolated Rust verifier
         run: bash scripts/prefetch-pinned-rust-verifier.sh

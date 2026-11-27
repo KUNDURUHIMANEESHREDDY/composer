@@ -411,6 +411,44 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
+    fn heldout30_shared_behavioral_contract_passes_admission_without_weakening_policy() {
+        // Exercise the actual Python-generated fixture used for all 30 CI targets.
+        // Its unconditional assertion must pass the strict parser, while the
+        // earlier loop-only assertion remains disallowed.
+        let harness = include_str!("../../../tests/test_heldout30_functional_anyhow.py");
+        let oracle = harness
+            .split("INDEPENDENT_ORACLE = \"\"\"")
+            .nth(1)
+            .and_then(|text| text.split("\"\"\"").next())
+            .expect("heldout30 Python fixture must contain the shared oracle");
+        let root =
+            std::env::temp_dir().join(format!("composer-heldout30-admission-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("tests")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='heldout-contract-check'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        let contract = root.join("tests/heldout.rs");
+        fs::write(&contract, oracle).unwrap();
+        assert!(
+            validate_contract_test(&root, Path::new("tests/heldout.rs"), "ported_totient").is_ok(),
+            "shared held-out functional contract must pass strict AST admission"
+        );
+        let previous = oracle.replacen("    assert_eq!(ported_totient(36), 12);\n", "", 1);
+        assert_ne!(
+            previous, oracle,
+            "unconditional edge-case assertion disappeared"
+        );
+        fs::write(&contract, previous).unwrap();
+        assert!(
+            validate_contract_test(&root, Path::new("tests/heldout.rs"), "ported_totient").is_err(),
+            "loop-only assertions must still be rejected"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn substitutes_only_exact_stub_body() {
         let root = std::env::temp_dir().join(format!("composer-review-{}", Uuid::new_v4()));
         fs::create_dir_all(root.join("src")).unwrap();
