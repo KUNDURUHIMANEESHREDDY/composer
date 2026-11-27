@@ -164,7 +164,16 @@ def verify(working: Path, upstream: Path, base: Path, name: str,
         arguments.append("--allow-binary-library-adapter")
     if TARGET_MEMBER_DIR:
         arguments.extend(["--target-member-dir", TARGET_MEMBER_DIR])
-    response = cli(*arguments, require_success=require_success)
+    # Syn's original full rustc-precedence suite exercises hundreds of
+    # thousands of expressions. Keep the Docker verifier's strict 900s cap;
+    # give its outer Python CLI caller enough time to receive the result.
+    # All other targets retain the existing 320s timeout.
+    full_syn = (TARGET == "dtolnay/syn"
+                and os.getenv("COMPOSER_VERIFIER_TOOLCHAIN")
+                == "nightly-rustc-dev-2026-11-25"
+                and not contract_focused)
+    outer_timeout = 990 if full_syn else 320
+    response = cli(*arguments, require_success=require_success, timeout=outer_timeout)
     return response, output
 
 

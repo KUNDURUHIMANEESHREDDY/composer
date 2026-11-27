@@ -39,9 +39,9 @@ fn independent_totient_contract() {
 """
 
 
-def cli(*args: str, require_success: bool = True):
+def cli(*args: str, require_success: bool = True, timeout: int = 320):
     return run("cargo", "run", "--quiet", "-p", "composer-cli", "--",
-               *args, require_success=require_success, timeout=320)
+               *args, require_success=require_success, timeout=timeout)
 
 
 def verify_unpublished_on_registry() -> None:
