@@ -217,6 +217,10 @@ enum Command {
         /// Optional reviewed target API, e.g. transliterate(String)->String.
         #[arg(long)]
         target_signature: Option<String>,
+        /// Infer an owned-String adapter from a single public &str -> String function in pinned Git source.
+        /// Requires independent source review and behavioral tests; not semantic inference.
+        #[arg(long, conflicts_with = "target_signature")]
+        infer_owned_string_signature: bool,
         /// Existing tests/<name>.rs independently authored contract.
         #[arg(long)]
         contract_test: PathBuf,
@@ -493,6 +497,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             public_symbol,
             target_alias,
             target_signature,
+            infer_owned_string_signature,
             contract_test,
             registry_cache,
             git_cache,
@@ -508,6 +513,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 public_symbol,
                 target_alias,
                 target_signature,
+                infer_owned_string_signature,
                 contract_test,
                 registry_cache,
                 git_cache,
