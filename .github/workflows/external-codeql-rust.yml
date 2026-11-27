@@ -40,7 +40,7 @@ jobs:
           build-mode: none
           queries: security-extended
       - name: Analyze Rust source without running third-party build scripts
-        uses: github/codeql-action/analyze@bf58c2ac1f8060aa73f1225f461c80391348076a
+        uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934
         with:
           category: /language:rust
           output: codeql-rust-raw
