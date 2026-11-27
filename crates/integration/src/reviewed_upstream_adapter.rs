@@ -186,8 +186,12 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert!(borrowed.contains("pub fn distance(arg0: ::std::string::String, arg1: ::std::string::String) -> usize"));
-        assert!(borrowed.contains("composer_git_strsim::levenshtein(arg0.as_str(), arg1.as_str())"));
+        assert!(borrowed.contains(
+            "pub fn distance(arg0: ::std::string::String, arg1: ::std::string::String) -> usize"
+        ));
+        assert!(
+            borrowed.contains("composer_git_strsim::levenshtein(arg0.as_str(), arg1.as_str())")
+        );
 
         let mixed = reviewed_typed_git_adapter(
             "upstream",
