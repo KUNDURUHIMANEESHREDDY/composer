@@ -43,7 +43,7 @@ jobs:
             throw "Windows gVisor preflight script failed PowerShell AST parsing"
           }
           Write-Output "PASS Windows gVisor preflight syntax; actual Docker Desktop runtime NOT tested"
-      - name: Regression test: missing Docker Desktop engine fails closed and is classified
+      - name: Verify missing Docker Desktop engine fails closed and is classified
         shell: pwsh
         run: |
           # Simulated failure only. A passing mock does NOT prove live gVisor.
