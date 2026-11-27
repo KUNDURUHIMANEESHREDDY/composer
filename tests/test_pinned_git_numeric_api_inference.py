@@ -46,6 +46,8 @@ AMBIGUOUS_CONTRACT = """use trigram::ported_levenshtein;
 fn same_signature_insufficient_contract_must_not_choose_automatically() {
     assert_eq!(ported_levenshtein("".to_owned(), "".to_owned()), 0);
     assert_eq!(ported_levenshtein("same".to_owned(), "same".to_owned()), 0);
+    assert_eq!(ported_levenshtein("a".to_owned(), "a".to_owned()), 0);
+    assert_eq!(ported_levenshtein("abc".to_owned(), "abc".to_owned()), 0);
 }
 """
 
