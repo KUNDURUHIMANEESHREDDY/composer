@@ -228,17 +228,19 @@ def main() -> None:
         # no_std, whereas the imported code assumes a std prelude.
         # A rejection must leave the target and proposed output untouched.
         if prepare_registry(targets["rustc-hash"], root, "rustc-hash"):
-            verify_feature(
+            assert not verify_feature(
                 root, graph, targets["rustc-hash"], "rustc-hash", "public-graph",
                 "graph::Graph=ImportedGraph",
-            )
-            verify_feature(
+            ), "Unexpected std-dependent module acceptance in no_std target"
+            assert not verify_feature(
                 root, range_query, targets["rustc-hash"], "rustc-hash", "public-range"
-            )
+            ), "Unexpected std-dependent range acceptance in no_std target"
         else:
             print("BLOCKED rustc-hash: offline registry prerequisites", flush=True)
         if prepare_registry(targets["cfg-if"], root, "cfg-if"):
-            verify_feature(root, graph, targets["cfg-if"], "cfg-if", "public-graph")
+            assert not verify_feature(
+                root, graph, targets["cfg-if"], "cfg-if", "public-graph"
+            ), "Unexpected std-dependent graph acceptance in no_std target"
         else:
             print("BLOCKED cfg-if: offline registry prerequisites", flush=True)
         print("PASS pinned cross-repository geometry API integration; "
