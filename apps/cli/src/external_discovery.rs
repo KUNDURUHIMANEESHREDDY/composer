@@ -57,9 +57,7 @@ fn parse_candidates(output: &str, query: &str, limit: usize) -> Vec<Candidate> {
         };
         if version.is_empty()
             || version.len() > 64
-            || !version.bytes().all(|b| {
-                b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+')
-            })
+            || semver::Version::parse(version).is_err()
         {
             continue;
         }
@@ -109,6 +107,8 @@ pub(crate) fn discover_external_crates(
         .arg("search")
         .arg("--limit")
         .arg(limit.to_string())
+        .arg("--registry")
+        .arg("crates-io")
         .arg("--")
         .arg(query)
         .env("CARGO_NET_RETRY", "0")
