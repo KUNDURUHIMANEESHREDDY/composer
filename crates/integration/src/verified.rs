@@ -1166,7 +1166,8 @@ mod tests {
         fs::write(
             capsule.join("context/manifests/Cargo.toml"),
             "[package]\nname='synthetic_source'\nversion='0.1.0'\n[dependencies]\nsemver='1'\n",
-        ).unwrap();
+        )
+        .unwrap();
         let target_manifest = target.join("Cargo.toml");
         let target_lock = target.join("Cargo.lock");
         let incompatible = "[package]\nname='synthetic_target'\nversion='0.1.0'\n[dependencies]\nsemver='=0.11.0'\n";
@@ -1174,7 +1175,8 @@ mod tests {
         fs::write(
             &target_lock,
             "version = 4\n[[package]]\nname = 'semver'\nversion = '0.11.0'\n",
-        ).unwrap();
+        )
+        .unwrap();
         let manifest = CapsuleManifest {
             schema_version: 1,
             capsule_id: "semver-fixture".into(),
@@ -1211,9 +1213,8 @@ mod tests {
         };
         let before_manifest = fs::read(&target_manifest).unwrap();
         let before_lock = fs::read(&target_lock).unwrap();
-        let result = verify_locked_source_constraints(
-            &manifest, &capsule, &target_manifest, &target_lock,
-        );
+        let result =
+            verify_locked_source_constraints(&manifest, &capsule, &target_manifest, &target_lock);
         match result {
             Err(VerifiedRustError::Dependency(message)) => {
                 assert!(message.contains("incompatible with source"), "{message}");
@@ -1232,10 +1233,11 @@ mod tests {
         fs::write(
             &target_lock,
             "version = 4\n[[package]]\nname = 'semver'\nversion = '1.0.28'\n",
-        ).unwrap();
-        let reconciled = verify_locked_source_constraints(
-            &manifest, &capsule, &target_manifest, &target_lock,
-        ).unwrap();
+        )
+        .unwrap();
+        let reconciled =
+            verify_locked_source_constraints(&manifest, &capsule, &target_manifest, &target_lock)
+                .unwrap();
         assert_eq!(reconciled.len(), 1);
         assert!(reconciled[0].contains("1.0.28"));
         fs::remove_dir_all(root).unwrap();
