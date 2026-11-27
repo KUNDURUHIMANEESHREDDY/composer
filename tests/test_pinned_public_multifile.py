@@ -110,7 +110,8 @@ def prepare_registry(target: Path, root: Path, name: str) -> bool:
 def verify_feature(root: Path, capsule: Path, target: Path, name: str,
                    capability: str, api_alias: str | None = None,
                    api_contract: str | None = None,
-                   expected_sha: str = SOURCE_SHA) -> bool:
+                   expected_sha: str = SOURCE_SHA,
+                   api_signature: str | None = None) -> bool:
     staged_target = root / f"target-input-{capability}-{name}"
     shutil.copytree(target, staged_target, ignore=shutil.ignore_patterns(".git"))
     original_lib = (staged_target / "src/lib.rs").read_bytes()
@@ -127,9 +128,12 @@ def verify_feature(root: Path, capsule: Path, target: Path, name: str,
     ]
     if api_alias is not None:
         command += ["--api-alias", api_alias]
+    if api_signature is not None:
+        command += ["--api-signature", api_signature]
     result = cli(*command, require_success=False)
     assert (staged_target / "src/lib.rs").read_bytes() == original_lib
     assert not (staged_target / "src" / f"composer_{capability.replace('-', '_')}").exists()
+    assert not (staged_target / "src" / f"composer_{capability.replace('-', '_')}.rs").exists()
     if result.returncode:
         assert not output.exists(), "Verifier published output after failure"
         print(
@@ -149,7 +153,17 @@ def verify_feature(root: Path, capsule: Path, target: Path, name: str,
     for notice in attribution[0]["license_documents"]:
         assert (output / notice["published_path"]).is_file()
     assert evidence["verified_api_aliases"] == ([api_alias] if api_alias else [])
-    assert (output / "src" / f"composer_{capability.replace('-', '_')}" / "mod.rs").is_file()
+    assert evidence["verified_api_signatures"] == (
+        [api_signature] if api_signature else []
+    )
+    included = json.loads((capsule / "manifest.json").read_text())[
+        "included_source_files"
+    ]
+    if len(included) > 1:
+        module = output / "src" / f"composer_{capability.replace('-', '_')}" / "mod.rs"
+    else:
+        module = output / "src" / f"composer_{capability.replace('-', '_')}.rs"
+    assert module.is_file(), f"Expected verified module: {module}"
     expected_target_notices = (
         ("LICENSE",) if name == "ebtech-target"
         else ("LICENSE-MIT", "LICENSE-APACHE")
@@ -223,6 +237,30 @@ def main() -> None:
             geometry_contract,
             expected_sha=GEOMETRY_SHA,
         ), "Cross-repository geometry integration failed"
+
+        # Separate independent source function signature conversion:
+        # public u64 -> u64 wrapped as target u32 -> u128 (only From/Into).
+        # This is an original public source file, not a synthetic fixture.
+        totient = make_capsule(
+            geometry_source, root, "euler_totient",
+            "src/number_theory/euler_totient.rs",
+            "public-totient",
+            {"src/number_theory/euler_totient.rs"},
+            expected_sha=GEOMETRY_SHA,
+        )
+        totient_contract = (
+            "use contest_algorithms::adapted_totient;\n"
+            "#[test] fn verified_real_public_signature() { "
+            "let value: u128 = adapted_totient(9_u32); "
+            "assert_eq!(value, 6_u128); }\n"
+        )
+        assert verify_feature(
+            root, totient, targets["ebtech-target"], "ebtech-target",
+            "public-totient",
+            api_contract=totient_contract,
+            expected_sha=GEOMETRY_SHA,
+            api_signature="euler_totient=adapted_totient(u32)->u128",
+        ), "Public-source signature conversion failed"
 
         # Separate negative compatibility probes. These targets declare
         # no_std, whereas the imported code assumes a std prelude.
