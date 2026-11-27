@@ -450,6 +450,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 license_reviewed,
             })?;
             println!("{}", serde_json::to_string_pretty(&report)?);
+            if !report.completed {
+                return Err("no external candidate passed independent verification; see recovery JSON report".into());
+            }
         }
         Command::VerifyRustBatch {
             capsules,

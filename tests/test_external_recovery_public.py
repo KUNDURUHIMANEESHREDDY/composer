@@ -48,8 +48,9 @@ GOOD = candidate(UPSTREAM_TWO, "textdistance", "str::jaro", "^1.1")
 STRSIM_GOOD = candidate(UPSTREAM_ONE, "strsim", "jaro", "^0.11")
 
 
-def cli(*args: str):
-    return run("cargo", "run", "--quiet", "-p", "composer-cli", "--", *args, timeout=300)
+def cli(*args: str, require_success: bool = True):
+    return run("cargo", "run", "--quiet", "-p", "composer-cli", "--", *args,
+               timeout=300, require_success=require_success)
 
 
 def create_target(source: Path, root: Path, name: str, conflict: bool = False):
@@ -100,11 +101,12 @@ def fetch_real_crates(target: Path, root: Path) -> None:
         assert matches, f"required upstream registry artifact was not cached: {prefix}"
 
 
-def recover(target: Path, root: Path, name: str, candidates: list[dict]):
+def recover(target: Path, root: Path, name: str, candidates: list[dict],
+            require_success: bool = True):
     manifest = root / f"{name}-candidates.json"
     manifest.write_text(json.dumps(candidates), encoding="utf-8")
     output = root / f"verified-{name}"
-    report = json.loads(cli(
+    response = cli(
         "recover-external-rust-crate", str(target),
         "--output", str(output),
         "--candidates-json", str(manifest),
@@ -112,7 +114,12 @@ def recover(target: Path, root: Path, name: str, candidates: list[dict]):
         "--contract-test", CONTRACT,
         "--registry-cache", str(CACHE),
         "--license-reviewed",
-    ).stdout)
+        require_success=require_success,
+    )
+    if not require_success:
+        assert response.returncode != 0, "all-failed recovery must return a nonzero process exit"
+        assert "no external candidate passed" in response.stderr, response.stderr[-2500:]
+    report = json.loads(response.stdout)
     return report, output
 
 
@@ -170,7 +177,7 @@ def resolve_unpinned_version(source: Path, root: Path) -> None:
 
 def all_candidates_fail_without_publication(source: Path, root: Path) -> None:
     target, before = create_target(source, root, "all-failed")
-    report, output = recover(target, root, "all-failed", [BAD])
+    report, output = recover(target, root, "all-failed", [BAD], require_success=False)
     assert report["completed"] is False, report
     assert report["tests_passed"] is False
     assert report["output_root"] is None
