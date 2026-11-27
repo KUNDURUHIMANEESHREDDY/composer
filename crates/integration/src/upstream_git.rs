@@ -31,7 +31,7 @@ const RUSTLS_PUBLIC_FIXTURE_TREE: &str = "b42c258742023dde0c447979ee72349f92c200
 /// Allow only the already-public test CA fixtures of the exact frozen Rustls
 /// repository. These keys are public upstream test fixtures, not credentials.
 /// No new untracked or modified data can be copied from a user's machine.
-fn copy_pinned_rustls_test_ca(
+fn copy_pinned_rustls_test_fixtures(
     original: &Path,
     staged: &Path,
 ) -> Result<&'static str, VerifiedRustError> {
@@ -66,10 +66,12 @@ fn copy_pinned_rustls_test_ca(
         "--untracked-files=all",
         "--",
         "test-ca",
+        "rustls/src/testdata",
+        "rustls/tests/data",
     ])?;
     if !changed.stdout.is_empty() {
         return Err(VerifiedRustError::Unsafe(
-            "modified or untracked test CA files are not allowed".into(),
+            "modified or untracked pinned Rustls test fixtures are not allowed".into(),
         ));
     }
     let source_dir = original.join("test-ca");
@@ -139,6 +141,99 @@ fn copy_pinned_rustls_test_ca(
         return Err(VerifiedRustError::Unsafe(
             "reviewed Rustls test CA fixture set was incomplete".into(),
         ));
+    }
+
+    // Rustls' full-scope unit tests also use checked-in binary input vectors.
+    // Our generic copier deliberately excludes binary files; admit only these
+    // two exact immutable upstream Git trees, never arbitrary target .bin files.
+    for (directory, expected_tree, expected_count) in [
+        (
+            "rustls/src/testdata",
+            "303a8ed419e6d11d6afdb804872a3365f980a12a",
+            19_usize,
+        ),
+        (
+            "rustls/tests/data",
+            "618385f9ab2292bf918fcb610afd3016165db536",
+            3_usize,
+        ),
+    ] {
+        let tree_ref = format!("HEAD:{directory}");
+        let actual_tree = git(&["rev-parse", &tree_ref])?;
+        if String::from_utf8_lossy(&actual_tree.stdout).trim() != expected_tree {
+            return Err(VerifiedRustError::Unsafe(
+                "Rustls binary fixture tree differs from reviewed public Git objects".into(),
+            ));
+        }
+        let source_dir = original.join(directory);
+        let source_meta = fs::symlink_metadata(&source_dir)?;
+        if !source_meta.is_dir() || source_meta.file_type().is_symlink() {
+            return Err(VerifiedRustError::Unsafe(
+                "Rustls binary fixture directory is unsafe".into(),
+            ));
+        }
+        let canonical_dir = source_dir.canonicalize()?;
+        let entries = git(&["ls-tree", "-r", "-z", "HEAD", "--", directory])?;
+        let mut fixture_count = 0_usize;
+        let mut fixture_bytes = 0_u64;
+        for entry in entries
+            .stdout
+            .split(|&byte| byte == 0)
+            .filter(|entry| !entry.is_empty())
+        {
+            let record = std::str::from_utf8(entry)
+                .map_err(|_| VerifiedRustError::Unsafe("non-UTF8 Rustls fixture path".into()))?;
+            let (object, path) = record.split_once('\t').ok_or_else(|| {
+                VerifiedRustError::Unsafe("invalid Rustls fixture Git tree record".into())
+            })?;
+            let relative = Path::new(path);
+            if !object.starts_with("100644 blob ")
+                || !path.starts_with(&format!("{directory}/"))
+                || relative
+                    .components()
+                    .any(|c| !matches!(c, Component::Normal(_)))
+                || !matches!(
+                    relative.extension().and_then(|ext| ext.to_str()),
+                    Some("bin" | "der")
+                )
+            {
+                return Err(VerifiedRustError::Unsafe(
+                    "unreviewed, executable, or unsafe Rustls binary fixture".into(),
+                ));
+            }
+            let source = original.join(relative);
+            let meta = fs::symlink_metadata(&source)?;
+            if !meta.is_file()
+                || meta.file_type().is_symlink()
+                || !source.canonicalize()?.starts_with(&canonical_dir)
+            {
+                return Err(VerifiedRustError::Unsafe(
+                    "Rustls binary fixture is not a regular tracked file".into(),
+                ));
+            }
+            fixture_count += 1;
+            fixture_bytes += meta.len();
+            if fixture_count > 24 || fixture_bytes > 64 * 1024 {
+                return Err(VerifiedRustError::Unsafe(
+                    "Rustls binary fixture count or size exceeded".into(),
+                ));
+            }
+            let destination = staged.join(relative);
+            if destination.exists() {
+                return Err(VerifiedRustError::Unsafe(
+                    "Rustls binary fixture would overwrite a staged file".into(),
+                ));
+            }
+            fs::create_dir_all(destination.parent().ok_or_else(|| {
+                VerifiedRustError::Unsafe("Rustls binary fixture destination missing parent".into())
+            })?)?;
+            fs::copy(source, destination)?;
+        }
+        if fixture_count != expected_count {
+            return Err(VerifiedRustError::Unsafe(
+                "reviewed Rustls binary fixture set is incomplete".into(),
+            ));
+        }
     }
     Ok(RUSTLS_PUBLIC_FIXTURE_TREE)
 }
@@ -824,7 +919,7 @@ pub fn verify_upstream_git(
             .is_some_and(|p| p == Path::new("rustls"))
             && selected_package.as_deref() == Some("rustls")
         {
-            Some(copy_pinned_rustls_test_ca(&original, &staged)?)
+            Some(copy_pinned_rustls_test_fixtures(&original, &staged)?)
         } else {
             None
         };
