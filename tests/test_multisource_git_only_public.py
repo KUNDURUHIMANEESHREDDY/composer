@@ -71,6 +71,7 @@ def prepare(target: Path, root: Path) -> None:
     run("cargo", "fetch", "--manifest-path", str(manifest),
         "--target", "x86_64-unknown-linux-gnu", timeout=180)
     assert (GIT_CACHE / "checkouts").is_dir() and CACHE.is_dir()
+    assert (pref / "Cargo.lock").is_file(), "Cargo must resolve and pin all dependencies during prefetch"
 
 
 def target_copy(original: Path, base: Path, label: str):
@@ -78,8 +79,12 @@ def target_copy(original: Path, base: Path, label: str):
     shutil.copytree(original, target, ignore=shutil.ignore_patterns(".git"))
     (target / "tests").mkdir(exist_ok=True)
     (target / CONTRACT).write_text(TESTS, encoding="utf-8")
+    # Cargo's own prefetched exact dependency graph must be carried into the
+    # disposable test target. Offline resolver is intentionally not allowed
+    # to make a different choice from cached sparse-index entries.
+    shutil.copy2(base / "cargo-git-prefetch/Cargo.lock", target / "Cargo.lock")
     snapshots = {p: (target / p).read_bytes() for p in [
-        "Cargo.toml", "src/lib.rs", CONTRACT
+        "Cargo.toml", "Cargo.lock", "src/lib.rs", CONTRACT
     ]}
     return target, snapshots
 
