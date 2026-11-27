@@ -274,7 +274,10 @@ fn parse_function(node: Node<'_>, source: &str, file: &Path, module: &str) -> Op
     // Conservative: do not infer across visibility, const/async/unsafe, ABI,
     // generics or attributes that alter calling conventions.
     if prefix != "pub fn"
-        || !source.get(name.end_byte()..args.start_byte())?.trim().is_empty()
+        || !source
+            .get(name.end_byte()..args.start_byte())?
+            .trim()
+            .is_empty()
     {
         // Reject type parameters and any syntax between name and arguments;
         // no generic/source specialization may be inferred from a simple call.
@@ -505,13 +508,23 @@ impl Internal { pub fn method(s: &str) -> String { s.to_owned() } }
             infer_owned_string_target_signature(source, "combine", "concat"),
             Some("concat(String,String)->String".into())
         );
-        for unsupported in ["wrong", "generic", "reference", "delayed", "method", "missing", "deunicode;evil"] {
+        for unsupported in [
+            "wrong",
+            "generic",
+            "reference",
+            "delayed",
+            "method",
+            "missing",
+            "deunicode;evil",
+        ] {
             assert!(
                 infer_owned_string_target_signature(source, unsupported, "target").is_none(),
                 "{unsupported}"
             );
         }
-        assert!(infer_owned_string_target_signature(source, "deunicode", "unsafe::target").is_none());
+        assert!(
+            infer_owned_string_target_signature(source, "deunicode", "unsafe::target").is_none()
+        );
     }
 
     #[test]
