@@ -8,6 +8,7 @@ on:
       - crates/integration/**
       - apps/cli/**
       - Cargo.lock
+      - scripts/check-windows-docker-gvisor.ps1
 
 permissions:
   contents: read
@@ -30,6 +31,18 @@ jobs:
           if (-not (Select-String -Path windows-cli-help.log -Pattern "verify-external-git-rust" -Quiet)) {
             throw "Missing pinned external Git import subcommand"
           }
+      - name: Validate Docker Desktop gVisor preflight PowerShell syntax without executing Docker
+        shell: pwsh
+        run: |
+          $source = Get-Content -Raw scripts/check-windows-docker-gvisor.ps1
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | Format-List
+            throw "Windows gVisor preflight script failed PowerShell AST parsing"
+          }
+          Write-Output "PASS Windows gVisor preflight syntax; actual Docker Desktop runtime NOT tested"
       - name: Preserve Windows help output
         if: always()
         uses: actions/upload-artifact@v4
