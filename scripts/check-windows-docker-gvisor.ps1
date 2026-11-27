@@ -6,6 +6,27 @@ param(
     [string]$EvidencePath = "composer-windows-docker-gvisor-evidence.json"
 )
 $ErrorActionPreference = "Stop"
+
+# Windows PowerShell 5.1 converts native stderr to a terminating
+# NativeCommandError under Stop. Use the existing Docker CLI in a narrow
+# helper that captures ONLY stdout and exit status; never record raw stderr
+# containing local usernames, registry names or daemon paths.
+function Invoke-DockerQuiet {
+    param([string[]]$DockerArguments)
+    $previous = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $stdout = & docker @DockerArguments 2>$null
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+    return [PSCustomObject]@{
+        Ok = ($exitCode -eq 0)
+        Text = ($stdout | Out-String).Trim()
+    }
+}
 $evidence = [ordered]@{
     schema_version = 1
     host = "Windows"
@@ -25,35 +46,38 @@ try {
     }
     else {
         $evidence.docker_cli_found = $true
-        $context = & docker context show 2>&1
-        if ($LASTEXITCODE -ne 0) { throw "docker_context_unavailable" }
-        $evidence.docker_context = ($context | Out-String).Trim()
+        $context = Invoke-DockerQuiet -DockerArguments @("context", "show")
+        if (-not $context.Ok) { throw "docker_context_unavailable" }
+        $evidence.docker_context = $context.Text
 
-        $daemon = & docker info --format '{{.OSType}}' 2>&1
-        if ($LASTEXITCODE -ne 0) { throw "docker_engine_unavailable" }
-        $evidence.daemon_os_linux = ($daemon | Out-String).Trim() -eq "linux"
+        $daemon = Invoke-DockerQuiet -DockerArguments @("info", "--format", "{{.OSType}}")
+        if (-not $daemon.Ok) { throw "docker_engine_unavailable" }
+        $evidence.daemon_os_linux = $daemon.Text -eq "linux"
         if (-not $evidence.daemon_os_linux) { throw "docker_is_not_using_linux_containers" }
 
         # A generic remote Linux Docker daemon is not proof of Docker Desktop.
-        $daemonProduct = & docker info --format '{{.OperatingSystem}}' 2>&1
-        if ($LASTEXITCODE -ne 0) { throw "docker_engine_identity_unavailable" }
-        $evidence.docker_desktop_daemon = ($daemonProduct | Out-String).Trim() -match "Docker Desktop"
+        $daemonProduct = Invoke-DockerQuiet -DockerArguments @("info", "--format", "{{.OperatingSystem}}")
+        if (-not $daemonProduct.Ok) { throw "docker_engine_identity_unavailable" }
+        $evidence.docker_desktop_daemon = $daemonProduct.Text -match "Docker Desktop"
         if (-not $evidence.docker_desktop_daemon) { throw "docker_engine_is_not_docker_desktop" }
 
-        $registered = & docker info --format '{{json .Runtimes}}' 2>&1
-        if ($LASTEXITCODE -ne 0) { throw "runtime_registry_unavailable" }
-        $runtimes = ($registered | Out-String).Trim() | ConvertFrom-Json
+        $registered = Invoke-DockerQuiet -DockerArguments @("info", "--format", "{{json .Runtimes}}")
+        if (-not $registered.Ok) { throw "runtime_registry_unavailable" }
+        $runtimes = $registered.Text | ConvertFrom-Json
         $evidence.runsc_registered = @($runtimes.PSObject.Properties.Name) -contains "runsc"
         if (-not $evidence.runsc_registered) { throw "runsc_runtime_not_registered" }
 
-        $cached = & docker image inspect rust:1.99-slim --format '{{.Id}}' 2>&1
-        $evidence.image_cached = $LASTEXITCODE -eq 0
+        $cached = Invoke-DockerQuiet -DockerArguments @("image", "inspect", "rust:1.99-slim", "--format", "{{.Id}}")
+        $evidence.image_cached = $cached.Ok
         if (-not $evidence.image_cached) { throw "rust_verifier_image_not_cached_no_auto_download" }
 
-        $output = & docker run --rm --pull=never --runtime=runsc --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges rust:1.99-slim sh -c 'printf COMPOSER_WINDOWS_GVISOR_RUNSC_OK' 2>&1
+        $output = Invoke-DockerQuiet -DockerArguments @(
+            "run", "--rm", "--pull=never", "--runtime=runsc", "--network=none",
+            "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
+            "rust:1.99-slim", "sh", "-c", "printf COMPOSER_WINDOWS_GVISOR_RUNSC_OK"
+        )
         $evidence.runsc_smoke_passed = (
-            $LASTEXITCODE -eq 0 -and
-            ($output | Out-String).Contains("COMPOSER_WINDOWS_GVISOR_RUNSC_OK")
+            $output.Ok -and $output.Text.Contains("COMPOSER_WINDOWS_GVISOR_RUNSC_OK")
         )
         if (-not $evidence.runsc_smoke_passed) { throw "runsc_smoke_failed" }
         $evidence.verified_windows_docker_desktop_gvisor = $true
