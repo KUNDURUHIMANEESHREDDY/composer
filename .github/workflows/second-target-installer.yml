@@ -1,0 +1,157 @@
+name: Independent target and real Windows NSIS install/uninstall
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/second-target-installer.yml
+      - packaging/**
+      - tests/test_second_target_git_reuse.py
+      - crates/integration/**
+      - apps/cli/**
+      - Cargo.lock
+  push:
+    branches:
+      - feat/second-target-nsis-installer
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-target-integration:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Provision existing restricted Docker verifier
+        run: docker pull rust:1.99-slim
+      - name: Verify original upstream in second public target and wrong-behavior rejection
+        run: python3 -u tests/test_second_target_git_reuse.py
+
+  windows-nsis-build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify pinned lockfile and native Windows Rust tests
+        shell: pwsh
+        run: |
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Original Cargo.lock was not valid" }
+          cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw "Rust format failed" }
+          cargo test --workspace --all-targets --locked
+          if ($LASTEXITCODE -ne 0) { throw "Native Windows Rust tests failed" }
+      - name: Compile existing Composer release executable
+        run: cargo build --release -p composer-cli --locked
+      - name: Install official upstream NSIS tool (exact Chocolatey version)
+        shell: pwsh
+        run: |
+          choco install nsis --version=3.13.0 -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Upstream NSIS installation failed" }
+      - name: Build actual current-user Windows setup EXE using NSIS
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          if (-not (Test-Path $makensis)) {
+            $makensis = (Get-Command makensis -ErrorAction Stop).Source
+          }
+          $source = Join-Path $PWD "target\release\composer.exe"
+          $output = Join-Path $PWD "dist\composer-setup.exe"
+          if (-not (Test-Path $source)) { throw "Cargo release CLI missing" }
+          & $makensis "/V2" "/DCOMPOSER_SOURCE=$source" "/DCOMPOSER_OUTPUT=$output" "packaging\composer-cli.nsi"
+          if ($LASTEXITCODE -ne 0) { throw "NSIS setup build failed" }
+          if (-not (Test-Path $output)) { throw "NSIS setup EXE missing" }
+          $hash = (Get-FileHash $output -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -Path dist/composer-setup.exe.sha256 -Value $hash
+          Write-Output "PASS third-party NSIS compiled a per-user Composer installer"
+      - name: Attest installer build with existing GitHub Sigstore-backed action
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/composer-setup.exe
+      - name: Upload signed provenance and installer to temporary workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: composer-nsis-windows-x64-installer
+          path: |
+            dist/composer-setup.exe
+            dist/composer-setup.exe.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-clean-install-uninstall:
+    needs: windows-nsis-build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: composer-nsis-windows-x64-installer
+          path: input
+      - name: Verify attestation; install and remove Composer on fresh Windows runner
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $setup = Join-Path $PWD "input\composer-setup.exe"
+          $shaFile = Join-Path $PWD "input\composer-setup.exe.sha256"
+          if (-not (Test-Path $setup) -or -not (Test-Path $shaFile)) {
+            throw "Expected installer artifact and digest absent"
+          }
+          gh attestation verify $setup --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw "GitHub build provenance verification failed" }
+          $expected = (Get-Content $shaFile -Raw).Trim().ToLowerInvariant()
+          $actual = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw "Downloaded NSIS setup SHA256 mismatch" }
+
+          $installed = Join-Path $env:LOCALAPPDATA "Programs\Composer"
+          $exe = Join-Path $installed "composer.exe"
+          $uninstaller = Join-Path $installed "Uninstall.exe"
+          $registry = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ComposerCLI"
+          $sentinel = Join-Path $env:LOCALAPPDATA "Programs\composer-do-not-touch.txt"
+          if ((Test-Path $installed) -or (Test-Path $registry)) {
+            throw "Fresh runner unexpectedly already has Composer installed"
+          }
+          Set-Content $sentinel -Value "Unrelated user data must remain untouched"
+          $installProc = Start-Process -FilePath $setup -ArgumentList "/S" -Wait -PassThru
+          if ($installProc.ExitCode -ne 0) {
+            throw "Silent Composer install failed: $($installProc.ExitCode)"
+          }
+          if (-not (Test-Path $exe) -or -not (Test-Path $uninstaller)) {
+            throw "Installed Composer executable or uninstaller missing"
+          }
+          if (-not (Test-Path $registry)) { throw "Windows uninstall registration missing" }
+          & $exe --version | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Installed Composer executable did not start" }
+          foreach ($command in @("discover-external-rust", "verify-external-git-rust", "recover-external-rust-crate")) {
+            & $exe $command --help | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Installed CLI missing command $command" }
+          }
+          Write-Output "PASS freshly installed Composer CLI and integration commands"
+
+          $uninstallProc = Start-Process -FilePath $uninstaller -ArgumentList "/S" -Wait -PassThru
+          if ($uninstallProc.ExitCode -ne 0) {
+            throw "Silent Composer uninstall failed: $($uninstallProc.ExitCode)"
+          }
+          for ($i = 0; $i -lt 40; $i++) {
+            if (-not (Test-Path $exe) -and -not (Test-Path $registry)) { break }
+            Start-Sleep -Milliseconds 500
+          }
+          if (Test-Path $exe) { throw "Composer executable remained after uninstall" }
+          if (Test-Path $registry) { throw "Uninstall registry entry remained" }
+          if (-not (Test-Path $sentinel)) { throw "Uninstaller removed unrelated user data" }
+          Remove-Item $sentinel
+          Write-Output "PASS clean Windows install, run, uninstall and unrelated-file preservation"
