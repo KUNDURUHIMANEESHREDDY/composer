@@ -51,7 +51,7 @@ pub(crate) fn validate_reviewed_api(
     Ok(())
 }
 
-fn validate_contract_test(
+pub(crate) fn validate_contract_test(
     target: &Path,
     test: &Path,
     function: &str,
