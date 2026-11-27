@@ -1,3 +1,5 @@
+mod external_discovery;
+
 use std::{error::Error, fs, net::SocketAddr, path::PathBuf};
 
 use clap::{Parser, Subcommand};
@@ -102,6 +104,15 @@ enum Command {
         /// Optional path to save machine-readable JSON recommendations.
         #[arg(long)]
         output: Option<PathBuf>,
+    },
+    /// Discover externally maintained crates through Cargo's existing registry search.
+    /// Read-only suggestions; never treated as reviewed or verified integrations.
+    DiscoverExternalCrates {
+        /// Keywords describing the desired capability (quote multiword queries).
+        capability: String,
+        /// Maximum number of external crate candidates to return (1-20).
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
     },
     /// Stage a verified Feature Capsule into a new target-local namespace.
     Integrate {
@@ -298,6 +309,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             } else {
                 println!("{}", serde_json::to_string_pretty(&plan)?);
             }
+        }
+        Command::DiscoverExternalCrates { capability, limit } => {
+            let report = external_discovery::discover_external_crates(&capability, limit)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::Integrate {
             capsule,
