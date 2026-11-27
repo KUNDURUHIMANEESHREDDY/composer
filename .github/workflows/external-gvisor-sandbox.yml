@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/external-gvisor-sandbox.yml
       - crates/integration/src/verified.rs
+      - scripts/install-pinned-gvisor.sh
       - tests/test_pinned_git_string_adapter_public.py
 
 permissions:
@@ -21,21 +22,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Preload verifier image
         run: docker pull rust:1.99-slim
-      - name: Install independently maintained gVisor through its signed APT repository
+      - name: Install exact upstream gVisor bundle with reviewed release SHA256
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y apt-transport-https ca-certificates curl gnupg
-          curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list >/dev/null
-          sudo apt-get update
-          sudo apt-get install -y runsc
-          sudo runsc install
-          sudo systemctl restart docker
-          dpkg-query -W runsc | tee gvisor-version.txt
-          docker info --format '{{json .Runtimes}}' | tee docker-runtimes.json
-          grep -q '"runsc"' docker-runtimes.json
+          bash scripts/install-pinned-gvisor.sh
+          cat gvisor-release-sha256.txt
+          cat gvisor-runsc-binary-sha256.txt
       - name: Prove runsc launches the existing Rust image
         shell: bash
         run: |
@@ -59,6 +52,8 @@ jobs:
           name: external-gvisor-runsc-verified-evidence
           path: |
             gvisor-version.txt
+            gvisor-release-sha256.txt
+            gvisor-runsc-binary-sha256.txt
             docker-runtimes.json
             gvisor-git-adapter-evidence.log
           if-no-files-found: warn
