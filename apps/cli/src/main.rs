@@ -214,6 +214,9 @@ enum Command {
         /// Target API name called by independent tests.
         #[arg(long)]
         target_alias: String,
+        /// Optional reviewed target API, e.g. transliterate(String)->String.
+        #[arg(long)]
+        target_signature: Option<String>,
         /// Existing tests/<name>.rs independently authored contract.
         #[arg(long)]
         contract_test: PathBuf,
@@ -489,6 +492,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             package,
             public_symbol,
             target_alias,
+            target_signature,
             contract_test,
             registry_cache,
             git_cache,
@@ -503,6 +507,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 package,
                 public_symbol,
                 target_alias,
+                target_signature,
                 contract_test,
                 registry_cache,
                 git_cache,
