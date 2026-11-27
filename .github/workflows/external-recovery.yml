@@ -1,0 +1,36 @@
+name: Verified external package recovery
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/external-recovery.yml
+      - tests/test_external_recovery_public.py
+      - crates/integration/**
+      - apps/cli/**
+  push:
+    branches:
+      - feat/external-recovery-planner
+    paths:
+      - .github/workflows/external-recovery.yml
+      - tests/test_external_recovery_public.py
+      - crates/integration/**
+      - apps/cli/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  external-recovery:
+    # Do not run arbitrary fork-supplied code within the Docker verifier.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Pre-provision pinned Docker compiler image
+        run: docker pull rust:1.99-slim
+      - name: Verify recovery across unrelated upstream Rust repositories
+        run: python3 -u tests/test_external_recovery_public.py
