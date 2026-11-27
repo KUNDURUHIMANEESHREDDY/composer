@@ -473,11 +473,18 @@ fn rust_candidates(root: &Path, source_file: &Path, target: &str) -> Vec<PathBuf
         .trim()
         .trim_end_matches("::");
 
-    // A bare "mod name" declaration is resolved beside the declaring module.
+    // A bare "mod name" is resolved in the declaring module's directory.
+    // In foo.rs, Rust loads foo/name.rs (or foo/name/mod.rs), not
+    // the sibling name.rs. In mod.rs, lib.rs, and main.rs it loads siblings.
     if !cleaned.contains("::") {
         let mut candidates = Vec::new();
         if let Some(parent) = source_file.parent() {
-            add_rust_module_candidates(&mut candidates, parent, cleaned);
+            let stem = source_file.file_stem().and_then(|s| s.to_str());
+            let module_dir = match stem {
+                Some("lib" | "main" | "mod") | None => parent.to_path_buf(),
+                Some(stem) => parent.join(stem),
+            };
+            add_rust_module_candidates(&mut candidates, &module_dir, cleaned);
         }
         return candidates;
     }

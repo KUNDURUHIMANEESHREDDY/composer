@@ -60,6 +60,84 @@ def make_capsule(root: Path, source: Path, symbol: str, capability: str) -> Path
     return capsule
 
 
+def verify_nested_modules(root: Path, target: Path) -> None:
+    """Real CLI capsule closure -> three-file transplant -> Docker tests -> rollback."""
+    source = root / "source-nested"
+    (source / "src/math").mkdir(parents=True)
+    (source / "Cargo.toml").write_text(
+        '[package]\nname="nested_source"\nversion="0.1.0"\nedition="2024"'
+        '\nlicense="MIT"\n[dependencies]\nserde_json = "1"\n', encoding="utf-8"
+    )
+    (source / "LICENSE").write_text("MIT fixture for local verification", encoding="utf-8")
+    (source / "src/lib.rs").write_text(
+        'pub mod math;\n'
+        'pub fn calculate(n: u32) -> u32 { crate::math::double(n) }\n'
+        '#[cfg(test)] mod tests { #[test] fn calculates() { '
+        'assert_eq!(super::calculate(21), 42); } }\n', encoding="utf-8"
+    )
+    (source / "src/math.rs").write_text(
+        'pub mod util;\n'
+        'pub fn double(n: u32) -> u32 { self::util::scale(n) }\n'
+        'pub fn encode(n: u32) -> String { serde_json::to_string(&double(n)).unwrap() }\n'
+        '#[cfg(test)] mod tests { #[test] fn encodes() { '
+        'assert_eq!(super::encode(21), "42"); } }\n', encoding="utf-8"
+    )
+    (source / "src/math/util.rs").write_text(
+        'pub fn scale(n: u32) -> u32 { n * 2 }\n'
+        '#[cfg(test)] mod tests { #[test] fn scales() { '
+        'assert_eq!(super::scale(4), 8); } }\n', encoding="utf-8"
+    )
+    capsule = make_capsule(root, source, "calculate", "nested-calculator")
+    manifest = json.loads((capsule / "manifest.json").read_text())
+    assert {x.replace("\\", "/") for x in manifest["included_source_files"]} == {
+        "src/lib.rs", "src/math.rs", "src/math/util.rs"
+    }, "Analyzer must follow bare mod declarations inside src/math.rs"
+    output = root / "verified-nested"
+    original = (target / "src/lib.rs").read_bytes()
+    result = json.loads(cli(
+        "verify-rust", str(capsule), str(target),
+        "--output", str(output), "--license-reviewed",
+        "--registry-cache", str(CARGO_CACHE),
+    ))
+    assert result["isolated_tests_passed"] is True
+    for file in ("mod.rs", "math.rs", "math/util.rs"):
+        assert (output / "src/composer_nested_calculator" / file).is_file(), file
+    assert "crate::composer_nested_calculator::math::double" in (
+        output / "src/composer_nested_calculator/mod.rs").read_text()
+    assert "serde_json = 1" in result["new_dependencies"]
+    assert (target / "src/lib.rs").read_bytes() == original
+    assert not (target / "src/composer_nested_calculator").exists()
+    attributions = json.loads((output / "composer-source-attributions.json").read_text())
+    assert len(attributions) == 1
+    assert (output / attributions[0]["license_documents"][0]["published_path"]).is_file()
+    assert "test result: ok" in json.loads(
+        (output / "composer-build-evidence.json").read_text()
+    )["log_tail"]
+    print("PASS nested Rust modules: 3-file dependency closure, crate path rewrite,"
+          " offline serde_json, original unchanged")
+
+    broken = root / "source-nested-broken"
+    shutil.copytree(source, broken)
+    leaf = broken / "src/math/util.rs"
+    leaf.write_text(
+        leaf.read_text().replace(
+            "assert_eq!(super::scale(4), 8)",
+            "assert_eq!(super::scale(4), 9)"
+        ), encoding="utf-8"
+    )
+    broken_capsule = make_capsule(root, broken, "calculate", "nested-broken")
+    rejected = root / "nested-must-not-publish"
+    cli(
+        "verify-rust", str(broken_capsule), str(target),
+        "--output", str(rejected), "--license-reviewed",
+        "--registry-cache", str(CARGO_CACHE),
+        expect_success=False
+    )
+    assert not rejected.exists(), "A failing nested test must not publish output"
+    assert (target / "src/lib.rs").read_bytes() == original
+    print("PASS multi-file rollback: failing nested test leaves no published output")
+
+
 def main() -> None:
     command("docker", "image", "inspect", "rust:1.99-slim")
     if not CARGO_CACHE.is_dir():
@@ -138,6 +216,7 @@ mod tests { #[test] fn works() { assert_eq!(super::baseline(), 7); } }
         assert not list(root.glob(".composer-batch-*"))
         assert (target / "src/lib.rs").read_bytes() == original
         print("PASS all-or-nothing rollback: second-stage test failure rejects batch")
+        verify_nested_modules(root, target)
 
 
 if __name__ == "__main__":

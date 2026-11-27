@@ -66,6 +66,16 @@ pub fn wire_rust_module(options: &RustWiringOptions) -> Result<RustWiringResult,
 pub(crate) fn wire_rust_module_for_verified_sandbox(
     options: &RustWiringOptions,
 ) -> Result<RustWiringResult, RustWiringError> {
+    let verified = verify_capsule(&options.capsule_root)?;
+    let source_count = verified
+        .manifest
+        .files
+        .iter()
+        .filter(|entry| entry.file_kind == "source")
+        .count();
+    if source_count > 1 {
+        return crate::multifile::wire_multifile_verified(options, &verified);
+    }
     wire_rust_module_internal(options, true)
 }
 
