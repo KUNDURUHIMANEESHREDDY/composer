@@ -3,6 +3,7 @@
 //! Cargo caches must be provisioned beforehand using cargo fetch; the source
 //! is executed only by Composer's existing isolated offline Docker verifier.
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Component, Path, PathBuf},
     process::Command,
@@ -304,6 +305,106 @@ fn validate_git_lock(
     Ok(candidates[0].to_owned())
 }
 
+/// Compare a bounded list of REVIEWED upstream symbols by reusing the
+/// existing compiler + independent target-owned contract tests. This is not
+/// semantic equivalence inference: it accepts only one candidate when exactly
+/// one passes the tests. Zero or several passing candidates are rejected.
+/// Candidates run in separate disposable output directories. Neither a failed
+/// candidate nor an ambiguous result can publish to the requested output.
+pub fn verify_upstream_git_candidates(
+    options: &UpstreamGitOptions,
+    alternatives: &[String],
+) -> Result<UpstreamGitResult, VerifiedRustError> {
+    if !options.license_reviewed {
+        return Err(VerifiedRustError::ReviewRequired);
+    }
+    if alternatives.is_empty()
+        || alternatives.len() > 4
+        || !options.infer_owned_string_signature
+        || options.target_signature.is_some()
+    {
+        return Err(VerifiedRustError::Unsafe(
+            "contract-based upstream symbol selection needs 2-5 reviewed candidates, inferred signatures, and no manual target signature".into(),
+        ));
+    }
+    let candidates = std::iter::once(&options.public_symbol)
+        .chain(alternatives.iter())
+        .collect::<Vec<_>>();
+    let mut distinct = BTreeSet::new();
+    for candidate in &candidates {
+        if !valid_public_path(candidate) || !distinct.insert(candidate.as_str()) {
+            return Err(VerifiedRustError::Unsafe(
+                "contract selection requires unique, valid reviewed upstream symbols".into(),
+            ));
+        }
+    }
+    let destination = &options.output_root;
+    if destination.exists() || !matches!(destination.components().next_back(), Some(Component::Normal(_))) {
+        return Err(VerifiedRustError::OutputExists(destination.clone()));
+    }
+    let original = options.target_root.canonicalize()?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| VerifiedRustError::Unsafe("contract selection output has no parent".into()))?
+        .canonicalize()?;
+    let output = parent.join(
+        destination.file_name().ok_or_else(|| VerifiedRustError::Unsafe("contract selection output has no name".into()))?,
+    );
+    if output.starts_with(&original) || original.starts_with(&output) {
+        return Err(VerifiedRustError::Unsafe(
+            "contract selection output overlaps original target".into(),
+        ));
+    }
+    // An explicit isolated directory (NOT the user's target) owns every
+    // intermediate result. All errors clean up this directory.
+    let staging = parent.join(format!(".composer-candidate-selection-{}", Uuid::new_v4()));
+    fs::create_dir(&staging)?;
+    let result = (|| {
+        let mut passed = Vec::new();
+        let mut attempts = Vec::new();
+        for (index, candidate) in candidates.iter().enumerate() {
+            let mut trial = options.clone();
+            trial.public_symbol = (*candidate).clone();
+            trial.output_root = staging.join(format!("candidate-{index}"));
+            match verify_upstream_git(&trial) {
+                Ok(verified) => {
+                    attempts.push(serde_json::json!({"symbol":candidate,"verified":true}));
+                    passed.push(verified);
+                }
+                Err(_) => {
+                    attempts.push(serde_json::json!({"symbol":candidate,"verified":false}));
+                }
+            }
+        }
+        if passed.len() != 1 {
+            return Err(VerifiedRustError::Unsafe(format!(
+                "contract-selected upstream API is not unique: {} out of {} reviewed candidates passed independent verification",
+                passed.len(),
+                candidates.len()
+            )));
+        }
+        let mut selected = passed.pop().ok_or_else(|| VerifiedRustError::Unsafe(
+            "contract selection unexpectedly has no verified candidate".into(),
+        ))?;
+        let mut evidence: serde_json::Value =
+            serde_json::from_slice(&fs::read(&selected.evidence_path)?)?;
+        evidence["contract_based_candidate_selection"] = serde_json::json!(true);
+        evidence["reviewed_candidate_count"] = serde_json::json!(candidates.len());
+        evidence["candidate_attempts"] = serde_json::json!(attempts);
+        evidence["semantic_equivalence_proven"] = serde_json::json!(false);
+        fs::write(
+            &selected.evidence_path,
+            serde_json::to_vec_pretty(&evidence)?,
+        )?;
+        fs::rename(&selected.output_root, &output)?;
+        selected.output_root = output.clone();
+        selected.evidence_path = output.join(GIT_EVIDENCE);
+        Ok(selected)
+    })();
+    let _ = fs::remove_dir_all(&staging);
+    result
+}
+
 /// Publish a new target copy ONLY if a reviewed Git checkout and the Cargo
 /// lockfile point to the exact same commit, and target-owned tests pass in an
 /// offline, resource-bounded Docker container.
@@ -554,6 +655,45 @@ pub fn verify_upstream_git(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contract_selection_refuses_duplicates_and_unreviewed_or_unbounded_candidates() {
+        let options = UpstreamGitOptions {
+            target_root: PathBuf::from("unknown"),
+            output_root: PathBuf::from("unused"),
+            upstream_checkout: PathBuf::from("untrusted"),
+            upstream_repository: "https://github.com/rapidfuzz/strsim-rs".into(),
+            upstream_commit: "dacc84c0dc61eff0ee0ff66962bcf2e17018ad26".into(),
+            package: "strsim".into(),
+            public_symbol: "levenshtein".into(),
+            target_alias: "ported_levenshtein".into(),
+            target_signature: None,
+            infer_owned_string_signature: true,
+            contract_test: PathBuf::from("tests/contract.rs"),
+            registry_cache: PathBuf::from("missing-registry"),
+            git_cache: PathBuf::from("missing-git"),
+            license_reviewed: true,
+        };
+        assert!(matches!(
+            verify_upstream_git_candidates(&options, &["levenshtein".into()]),
+            Err(VerifiedRustError::Unsafe(_))
+        ));
+        assert!(matches!(
+            verify_upstream_git_candidates(&options, &[]),
+            Err(VerifiedRustError::Unsafe(_))
+        ));
+        assert!(matches!(
+            verify_upstream_git_candidates(&options, &["bad;payload".into()]),
+            Err(VerifiedRustError::Unsafe(_))
+        ));
+        assert!(matches!(
+            verify_upstream_git_candidates(
+                &options,
+                &["one".into(), "two".into(), "three".into(), "four".into(), "five".into()],
+            ),
+            Err(VerifiedRustError::Unsafe(_))
+        ));
+    }
 
     #[test]
     fn rejects_non_pinned_git_source_inputs() {
