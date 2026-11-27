@@ -53,6 +53,7 @@ jobs:
           } else {
             Write-Output "::warning::Committed Cargo.lock requires Windows-specific resolution; native install reproducibility from the original lock remains open"
             git diff --stat -- Cargo.lock
+            git diff --no-ext-diff -- Cargo.lock
           }
       - name: Verify workspace unit tests from clean Windows runner with resolved lockfile
         run: cargo test --workspace --all-targets --locked
