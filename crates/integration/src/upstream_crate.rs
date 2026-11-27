@@ -28,6 +28,9 @@ pub struct UpstreamCrateOptions {
     pub version: String,
     pub public_symbol: String,
     pub target_alias: String,
+    /// Optional reviewed target-owned String API contract, e.g. transliterate(String)->String.
+    /// Generated adapter borrows &str; Rust type checks the upstream function.
+    pub target_signature: Option<String>,
     pub contract_test: PathBuf,
     pub registry_cache: PathBuf,
     /// Human-reviewed provenance assertion, NOT automatic source/release matching.
@@ -43,6 +46,7 @@ pub struct UpstreamCrateResult {
     pub locked_version: String,
     pub public_symbol: String,
     pub target_alias: String,
+    pub target_signature: Option<String>,
     pub registry_checksum: String,
     pub upstream_repository: String,
     pub upstream_commit_claimed: String,
@@ -151,6 +155,62 @@ fn locked_registry_checksum(
     Ok(checksum.to_owned())
 }
 
+/// An intentionally small typed wrapper: target-owned String arguments are
+/// borrowed as &str for an existing upstream function. It never invents
+/// business logic, calls the upstream implementation exactly once, and does
+/// not accept arbitrary expressions. Cargo + independent tests verify types
+/// and semantics before any output can be published.
+fn reviewed_owned_string_adapter(
+    options: &UpstreamCrateOptions,
+) -> Result<Option<String>, VerifiedRustError> {
+    let Some(signature) = &options.target_signature else {
+        return Ok(None);
+    };
+    if signature.len() > 180 {
+        return Err(VerifiedRustError::Unsafe(
+            "reviewed external target signature exceeds 180 bytes".into(),
+        ));
+    }
+    let parsed = crate::api_signature::parse_rule(&format!(
+        "{}={signature}",
+        options.public_symbol
+    ))?;
+    if parsed.name != options.target_alias
+        || parsed.source != options.public_symbol
+        || parsed.parameters.is_empty()
+        || !parsed.parameters.iter().all(|ty| ty == "String")
+    {
+        return Err(VerifiedRustError::Unsafe(
+            "reviewed borrowed-string adapter requires target_alias(String[,String...])->supported_return_type"
+                .into(),
+        ));
+    }
+    let inputs = parsed
+        .parameters
+        .iter()
+        .enumerate()
+        .map(|(index, _)| format!("arg{index}: ::std::string::String"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let borrowed = parsed
+        .parameters
+        .iter()
+        .enumerate()
+        .map(|(index, _)| format!("arg{index}.as_str()"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(Some(format!(
+        "\n// Composer: type-checked adapter to existing external upstream implementation\n\
+         pub fn {}({inputs}) -> {} {{\n\
+         {}::{}({borrowed})\n\
+         }}\n",
+        parsed.name,
+        parsed.result,
+        options.package.replace('-', "_"),
+        options.public_symbol,
+    )))
+}
+
 /// Publish a new target copy ONLY after Cargo's offline sandbox has compiled
 /// the exact released upstream crate and run target-owned behavioral tests.
 /// Caller must independently review licenses and selected upstream capabilities.
@@ -183,6 +243,7 @@ pub fn verify_upstream_crate(
         ));
     }
 
+    let string_adapter = reviewed_owned_string_adapter(options)?;
     let source = options.target_root.canonicalize()?;
     // The reviewed contract is supplied by the target, not generated from
     // upstream source. Avoid accepting a test that Cargo could skip.
@@ -282,13 +343,17 @@ pub fn verify_upstream_crate(
             .map_err(|err| VerifiedRustError::Toml(err.to_string()))?;
         fs::write(staged.join("Cargo.toml"), edited)?;
         let mut updated_lib = lib_source.clone();
-        updated_lib.push_str(&format!(
-            "\n// Composer: reviewed published crate reuse (no source regeneration)\n\
-             pub use {}::{} as {};\n",
-            options.package.replace('-', "_"),
-            options.public_symbol,
-            options.target_alias
-        ));
+        if let Some(adapter) = &string_adapter {
+            updated_lib.push_str(adapter);
+        } else {
+            updated_lib.push_str(&format!(
+                "\n// Composer: reviewed published crate reuse (no source regeneration)\n\
+                 pub use {}::{} as {};\n",
+                options.package.replace('-', "_"),
+                options.public_symbol,
+                options.target_alias
+            ));
+        }
         fs::write(staged.join("src/lib.rs"), updated_lib)?;
         let image_id = inspect_local_image_id()?;
         let user = nonroot_container_user()?;
@@ -313,6 +378,8 @@ pub fn verify_upstream_crate(
             "registry_checksum": locked_checksum,
             "public_symbol": options.public_symbol,
             "target_alias": options.target_alias,
+            "target_signature": options.target_signature,
+            "adapter_kind": if string_adapter.is_some() { "borrow_owned_strings_as_str" } else { "direct_reexport" },
             "contract_test": options.contract_test,
             "upstream_repository_claimed": options.upstream_repository,
             "upstream_commit_claimed": options.upstream_commit,
@@ -337,6 +404,7 @@ pub fn verify_upstream_crate(
             locked_version: options.version.clone(),
             public_symbol: options.public_symbol.clone(),
             target_alias: options.target_alias.clone(),
+            target_signature: options.target_signature.clone(),
             registry_checksum: locked_checksum,
             upstream_repository: options.upstream_repository.clone(),
             upstream_commit_claimed: options.upstream_commit.clone(),
@@ -390,6 +458,7 @@ mod tests {
             version: "0.11.1".into(),
             public_symbol: "jaro".into(),
             target_alias: "ported_jaro".into(),
+            target_signature: None,
             contract_test: PathBuf::from("tests/contract.rs"),
             registry_cache: PathBuf::from("cache"),
             upstream_repository: "https://github.com/rapidfuzz/strsim-rs".into(),
